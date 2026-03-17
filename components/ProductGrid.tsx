@@ -1,33 +1,59 @@
 "use client";
-
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
-import StaffLogin from "./StaffLogin";
+import { useState, useEffect, useRef, useCallback } from "react";
 import ProductCard from "./ProductCard";
+import StaffLogin from "./StaffLogin";
 
-const DECODE_MAP: Record<string, string> = {
-  "1":"R","2":"O","3":"Y","4":"A","5":"L","6":"T","7":"I","8":"M","9":"E","0":"S"
-};
-
-export function encodePrice(price: number): string {
-  return String(price).split("").map(d => DECODE_MAP[d] || d).join("");
+function isVideo(url: string) {
+  return !!(url?.match(/\.(mp4|webm|ogg|mov)$/i) || url?.includes("video"));
 }
 
-export function parseCategories(cat: any): string[] {
-  if (!cat) return [];
-  if (Array.isArray(cat)) return cat.map((c: string) => String(c).trim()).filter(Boolean);
-  if (typeof cat === "string") {
-    // Remove escaped quotes and try JSON parse
-    const cleaned = cat.replace(/\\"/g, '"').replace(/\\'/g, "'");
+function parseCategories(val: any): string[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val.map(String).filter(Boolean);
+  if (typeof val === "string") {
     try {
-      const parsed = JSON.parse(cleaned);
-      if (Array.isArray(parsed)) return parsed.map((c: string) => String(c).trim()).filter(Boolean);
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
     } catch {}
-    // Strip leading/trailing brackets and split
-    const stripped = cat.replace(/^\[|\]$/g, "").replace(/['"]/g, "").replace(/\\/g, "");
-    return stripped.split(",").map((c: string) => c.trim()).filter(Boolean);
+    return val.split(",").map(s => s.trim()).filter(Boolean);
   }
   return [];
+}
+
+const DB_NAME = "jg_wholesale_cache";
+const DB_VERSION = 1;
+const STORE_NAME = "products";
+
+function openDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = e => {
+      const db = (e.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: "id" });
+      }
+    };
+    req.onsuccess = e => resolve((e.target as IDBOpenDBRequest).result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveProductsToDB(products: any[]) {
+  const db = await openDB();
+  const tx = db.transaction(STORE_NAME, "readwrite");
+  const store = tx.objectStore(STORE_NAME);
+  store.clear();
+  products.forEach(p => store.put(p));
+}
+
+async function getProductsFromDB(): Promise<any[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const req = tx.objectStore(STORE_NAME).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
 }
 
 interface Props {
@@ -41,123 +67,142 @@ interface Props {
 
 export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin, onStaffChange, onLogout }: Props) {
   const [products, setProducts] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("All");
-  const [categories, setCategories] = useState<string[]>(["All"]);
-  const [fullscreen, setFullscreen] = useState<{ product: any; index: number } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
 
-  useEffect(() => { fetchProducts(); }, []);
+  // Fullscreen state
+  const [fsProduct, setFsProduct] = useState<any>(null);
+  const [fsIndex, setFsIndex] = useState(0);
+  const [fsClosing, setFsClosing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [showDesc, setShowDesc] = useState(false);
 
-  async function fetchProducts() {
+  const supabaseRef = useRef<any>(null);
+
+  useEffect(() => {
+    // Dynamic import supabase to avoid SSR issues
+    import("@/lib/supabase").then(({ supabase }) => {
+      supabaseRef.current = supabase;
+      loadProducts(supabase);
+    });
+
+    const handleOnline = () => { setIsOffline(false); };
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    if (!navigator.onLine) setIsOffline(true);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  async function loadProducts(supabase: any) {
     setLoading(true);
-    const { data } = await supabase.from("products").select("*").order("name");
-    if (data) {
-      setProducts(data);
-      const cats = new Set<string>();
-      data.forEach((p: any) => { parseCategories(p.category).forEach(cat => cats.add(cat)); });
-      setCategories(["All", ...Array.from(cats).sort()]);
+    try {
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from("products")
+          .select("id,name,mrp,price,wholesale_price,purchase_price,category,image_url,video_url,keywords,created_at,short_description,long_description,vendors")
+          .order("created_at", { ascending: false });
+
+        if (!error && data) {
+          setProducts(data);
+          await saveProductsToDB(data);
+        } else {
+          throw new Error("fetch failed");
+        }
+      } else {
+        throw new Error("offline");
+      }
+    } catch {
+      // Load from IndexedDB cache
+      try {
+        const cached = await getProductsFromDB();
+        if (cached.length > 0) {
+          setProducts(cached);
+          setIsOffline(true);
+        }
+      } catch {
+        setProducts([]);
+      }
     }
     setLoading(false);
   }
 
+  // All categories
+  const allCategories = ["All", ...Array.from(new Set(
+    products.flatMap(p => parseCategories(p.category))
+  )).sort()];
+
+  // Filtered products
   const filtered = products.filter(p => {
-    const matchSearch = !search ||
-      p.name?.toLowerCase().includes(search.toLowerCase()) ||
-      (Array.isArray(p.keywords) ? p.keywords : []).some((k: string) => k.toLowerCase().includes(search.toLowerCase()));
-    const pCats = parseCategories(p.category);
-    const matchCat = activeCategory === "All" || pCats.some(c => c === activeCategory);
-    return matchSearch && matchCat;
+    const cats = parseCategories(p.category);
+    const matchCat = activeCategory === "All" || cats.includes(activeCategory);
+    const q = search.toLowerCase();
+    const matchSearch = !q ||
+      p.name?.toLowerCase().includes(q) ||
+      (p.keywords || []).some((k: string) => k?.toLowerCase().includes(q));
+    return matchCat && matchSearch;
   });
 
-  return (
-    <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "system-ui,sans-serif" }}>
-      <style>{`
-        @keyframes fsIn { from{opacity:0;transform:scale(0.9)} to{opacity:1;transform:scale(1)} }
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-      `}</style>
+  // Fullscreen open
+  const openFullscreen = (product: any, index: number) => {
+    setFsProduct(product);
+    setFsIndex(index);
+    setFsClosing(false);
+    setShowDesc(false);
+    document.body.style.overflow = "hidden";
+    // Push history state for back button
+    window.history.pushState({ fullscreen: true }, "");
+  };
 
-      <div style={{ background: "linear-gradient(135deg,#ef4444,#b91c1c)", padding: "14px 16px 16px", position: "sticky", top: 0, zIndex: 50, boxShadow: "0 2px 12px rgba(220,38,38,0.3)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>Janaki Guru Enterprises</div>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.75)", fontWeight: 600, letterSpacing: "1px" }}>WHOLESALE PRICE LIST</div>
-          </div>
-          <div>
-            {staff ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.8)" }}>Staff</div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>{staff.name}</div>
-                </div>
-                <button onClick={onLogout} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)", color: "#fff", borderRadius: 10, padding: "6px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Logout</button>
-              </div>
-            ) : (
-              <button onClick={onShowLogin} style={{ background: "rgba(255,255,255,0.2)", border: "1.5px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 12, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>🔐 Staff Login</button>
-            )}
-          </div>
-        </div>
-        <div style={{ position: "relative" }}>
-          <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14 }}>🔍</span>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search products..."
-            style={{ width: "100%", background: "#fff", borderRadius: 12, border: "none", padding: "10px 12px 10px 34px", fontSize: 14, outline: "none", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }} />
-        </div>
-      </div>
+  // Fullscreen close
+  const closeFullscreen = useCallback(() => {
+    setFsClosing(true);
+    setTimeout(() => {
+      setFsProduct(null);
+      setFsClosing(false);
+      setShowDesc(false);
+      document.body.style.overflow = "";
+    }, 280);
+  }, []);
 
+  // Handle Android back button
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      if (fsProduct) {
+        closeFullscreen();
+      }
+      // If login modal open, close it
+      if (showLogin) {
+        onHideLogin();
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [fsProduct, showLogin, closeFullscreen, onHideLogin]);
 
-
-      <div className="scrollbar-hide" style={{ display: "flex", gap: 8, padding: "10px 12px", overflowX: "auto", background: "#fff", borderBottom: "1px solid #e2e8f0" }}>
-        {categories.map(cat => (
-          <button key={cat} onClick={() => setActiveCategory(cat)} style={{
-            flexShrink: 0, padding: "5px 12px", borderRadius: 20,
-            border: activeCategory === cat ? "none" : "1.5px solid #fca5a5",
-            background: activeCategory === cat ? "linear-gradient(135deg,#ef4444,#b91c1c)" : "#fff5f5",
-            color: activeCategory === cat ? "#fff" : "#dc2626",
-            fontSize: 12, fontWeight: 700, cursor: "pointer",
-          }}>{cat}</button>
-        ))}
-      </div>
-
-      <div style={{ padding: "12px 10px 80px" }}>
-        <div style={{ fontSize: 12, color: "#64748b", fontWeight: 600, marginBottom: 10 }}>
-          {activeCategory === "All" ? "All Products" : activeCategory} ({filtered.length} items)
-        </div>
-        {loading ? (
-          <div style={{ textAlign: "center", padding: 60, color: "#94a3b8" }}>Loading products...</div>
-        ) : filtered.length === 0 ? (
-          <div style={{ textAlign: "center", padding: 60, color: "#94a3b8" }}>No products found</div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
-            {filtered.map(p => (
-              <ProductCard key={p.id} product={p} staff={staff}
-                onImageClick={(idx: number) => setFullscreen({ product: p, index: idx })} />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {fullscreen && <FullscreenViewer product={fullscreen.product} startIndex={fullscreen.index} onClose={() => setFullscreen(null)} />}
-      {showLogin && <StaffLogin onClose={onHideLogin} onSuccess={onStaffChange} />}
-    </div>
-  );
-}
-
-function FullscreenViewer({ product, startIndex, onClose }: any) {
-  const media = [...(product.image_url || []), ...(product.video_url ? [product.video_url] : [])];
-  const [idx, setIdx] = useState(startIndex);
-  const [downloading, setDownloading] = useState(false);
-  function isVideo(url: string) { return !!(url?.match(/\.(mp4|webm|ogg|mov)$/i)); }
-  useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
-
-  async function handleDownload() {
-    const url = media[idx];
+  // Download
+  async function handleDownload(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!fsProduct) return;
+    const media = [...(fsProduct.image_url || []), ...(fsProduct.video_url ? [fsProduct.video_url] : [])];
+    const url = media[fsIndex];
     if (!url) return;
+    if (!navigator.onLine) {
+      alert("Internet required to download. Please turn on internet and try again.");
+      return;
+    }
     setDownloading(true);
     try {
       const response = await fetch(url);
       const blob = await response.blob();
       const ext = isVideo(url) ? "mp4" : "jpg";
-      const filename = product.name.replace(/[^a-z0-9]/gi, "_").toLowerCase() + "_" + (idx + 1) + "." + ext;
+      const filename = fsProduct.name.replace(/[^a-z0-9]/gi, "_").toLowerCase() + "_" + (fsIndex + 1) + "." + ext;
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl;
@@ -167,41 +212,359 @@ function FullscreenViewer({ product, startIndex, onClose }: any) {
       document.body.removeChild(a);
       URL.revokeObjectURL(blobUrl);
     } catch {
-      // Fallback: open in new tab
       window.open(url, "_blank");
     }
     setDownloading(false);
   }
 
+  // Fullscreen navigation
+  const getFsMedia = () => {
+    if (!fsProduct) return [];
+    return [...(fsProduct.image_url || []), ...(fsProduct.video_url ? [fsProduct.video_url] : [])];
+  };
+
+  const fsPrev = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const media = getFsMedia();
+    setFsIndex(i => (i - 1 + media.length) % media.length);
+  };
+  const fsNext = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const media = getFsMedia();
+    setFsIndex(i => (i + 1) % media.length);
+  };
+
+  const fsMedia = getFsMedia();
+  const fsSrc = fsMedia[fsIndex] || "";
+
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "linear-gradient(160deg,#1a0000,#2d0000,#1a0000)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", animation: "fsIn 0.25s ease both" }}>
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, background: "linear-gradient(135deg,#ef4444,#b91c1c)", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", zIndex: 10 }} onClick={e => e.stopPropagation()}>
-        <div style={{ color: "#fff", fontSize: 13, fontWeight: 700, maxWidth: "60%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{product.name}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {media.length > 1 && <span style={{ color: "rgba(255,255,255,0.8)", fontSize: 12 }}>{idx + 1}/{media.length}</span>}
-          <button onClick={e => { e.stopPropagation(); handleDownload(); }} disabled={downloading} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-            {downloading ? "⏳" : "⬇️"} {downloading ? "..." : "Save"}
-          </button>
-          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", borderRadius: "50%", width: 34, height: 34, fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+    <div style={{ minHeight: "100dvh", background: "#fff9f9", fontFamily: "system-ui,sans-serif" }}>
+
+      {/* Offline banner */}
+      {isOffline && (
+        <div style={{
+          background: "#fef3c7", borderBottom: "1px solid #f59e0b",
+          padding: "6px 16px", textAlign: "center", fontSize: 12, color: "#92400e",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+        }}>
+          📴 Offline — showing cached data. Turn on internet to sync latest prices.
+        </div>
+      )}
+
+      {/* Header */}
+      <div style={{
+        position: "sticky", top: 0, zIndex: 100,
+        background: "linear-gradient(135deg,#ef4444,#b91c1c)",
+        padding: "12px 16px 10px", boxShadow: "0 2px 12px rgba(185,28,28,0.25)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <div>
+            <div style={{ color: "#fff", fontWeight: 800, fontSize: 16, letterSpacing: 0.5 }}>
+              🏬 JG Wholesale
+            </div>
+            {staff && (
+              <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>
+                👤 {staff.name}
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {staff ? (
+              <button onClick={onLogout} style={{
+                background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)",
+                color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+              }}>Logout</button>
+            ) : (
+              <button onClick={onShowLogin} style={{
+                background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)",
+                color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+              }}>🔐 Staff Login</button>
+            )}
+          </div>
+        </div>
+
+        {/* Search */}
+        <div style={{ position: "relative" }}>
+          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 14 }}>🔍</span>
+          <input
+            placeholder="Search products..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              width: "100%", boxSizing: "border-box",
+              padding: "9px 12px 9px 32px",
+              borderRadius: 12, border: "none",
+              fontSize: 13, outline: "none",
+              background: "rgba(255,255,255,0.95)",
+            }}
+          />
         </div>
       </div>
-      <div onClick={e => e.stopPropagation()} style={{ width: "90vw", maxWidth: 420, background: "#fff", borderRadius: 20, overflow: "hidden", border: "2px solid rgba(239,68,68,0.4)", boxShadow: "0 20px 60px rgba(239,68,68,0.3)", marginTop: 56, marginBottom: 70 }}>
-        {isVideo(media[idx]) ? (
-          <video src={media[idx]} controls autoPlay style={{ width: "100%", maxHeight: "60vh", objectFit: "contain", background: "#000", display: "block" }} />
+
+      {/* Category chips */}
+      {allCategories.length > 1 && (
+        <div style={{
+          display: "flex", gap: 8, overflowX: "auto", padding: "10px 16px",
+          scrollbarWidth: "none", background: "#fff",
+          borderBottom: "1px solid #fee2e2",
+        }}>
+          {allCategories.map(cat => (
+            <button
+              key={cat}
+              onClick={() => setActiveCategory(cat)}
+              style={{
+                flexShrink: 0, padding: "5px 14px", borderRadius: 20,
+                border: activeCategory === cat ? "none" : "1.5px solid #fca5a5",
+                background: activeCategory === cat ? "linear-gradient(135deg,#ef4444,#b91c1c)" : "#fff",
+                color: activeCategory === cat ? "#fff" : "#dc2626",
+                fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
+              }}
+            >{cat}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Product grid */}
+      <div style={{ padding: "12px 10px", paddingBottom: 80 }}>
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 60, color: "#9ca3af" }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
+            <div>Loading products...</div>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 60, color: "#9ca3af" }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>📭</div>
+            <div>No products found</div>
+          </div>
         ) : (
-          <img src={media[idx]} alt={product.name} style={{ width: "100%", maxHeight: "60vh", objectFit: "contain", padding: 12, display: "block" }} />
-        )}
-      </div>
-      {media.length > 1 && (
-        <div onClick={e => e.stopPropagation()} style={{ position: "absolute", bottom: 16, display: "flex", alignItems: "center", gap: 16 }}>
-          <button onClick={() => setIdx((i: number) => (i - 1 + media.length) % media.length)} style={{ background: "rgba(239,68,68,0.85)", border: "none", color: "#fff", borderRadius: "50%", width: 40, height: 40, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
-          <div style={{ display: "flex", gap: 6 }}>
-            {media.map((_: any, i: number) => (
-              <div key={i} onClick={() => setIdx(i)} style={{ width: i === idx ? 18 : 7, height: 7, borderRadius: 4, background: i === idx ? "#ef4444" : "rgba(255,255,255,0.4)", transition: "all 0.3s", cursor: "pointer" }} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {filtered.map(p => (
+              <ProductCard
+                key={p.id}
+                product={p}
+                staff={staff}
+                onImageClick={(idx) => openFullscreen(p, idx)}
+              />
             ))}
           </div>
-          <button onClick={() => setIdx((i: number) => (i + 1) % media.length)} style={{ background: "rgba(239,68,68,0.85)", border: "none", color: "#fff", borderRadius: "50%", width: 40, height: 40, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
+        )}
+      </div>
+
+      {/* Staff count */}
+      {!loading && (
+        <div style={{
+          position: "fixed", bottom: 0, left: 0, right: 0,
+          background: "#fff", borderTop: "1px solid #fee2e2",
+          padding: "8px 16px", textAlign: "center",
+          fontSize: 11, color: "#9ca3af",
+        }}>
+          {filtered.length} product{filtered.length !== 1 ? "s" : ""}
+          {activeCategory !== "All" ? ` in ${activeCategory}` : ""}
+          {isOffline ? " (cached)" : ""}
         </div>
+      )}
+
+      {/* ── FULLSCREEN VIEWER ── */}
+      {fsProduct && (
+        <div
+          className={fsClosing ? "fs-bg-out" : "fs-bg"}
+          style={{
+            position: "fixed", inset: 0,
+            background: "linear-gradient(160deg,#1a0000,#2d0000,#1a0000)",
+            zIndex: 9999, display: "flex", flexDirection: "column",
+            overflowY: "auto",
+          }}
+          onClick={closeFullscreen}
+        >
+          <style>{`
+            @keyframes fsBgIn { from{opacity:0} to{opacity:1} }
+            @keyframes fsBgOut { from{opacity:1} to{opacity:0} }
+            .fs-bg { animation: fsBgIn 0.25s ease both; }
+            .fs-bg-out { animation: fsBgOut 0.25s ease both; }
+          `}</style>
+
+          {/* Top bar */}
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              position: "sticky", top: 0, zIndex: 10,
+              background: "linear-gradient(135deg,#ef4444,#b91c1c)",
+              padding: "12px 16px",
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+            }}
+          >
+            {/* Left: back + name */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+              <button onClick={closeFullscreen} style={{
+                background: "rgba(255,255,255,0.2)", border: "none",
+                color: "#fff", borderRadius: 8, width: 32, height: 32,
+                fontSize: 18, cursor: "pointer", flexShrink: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>←</button>
+              <div style={{
+                color: "#fff", fontSize: 13, fontWeight: 700,
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}>{fsProduct.name}</div>
+            </div>
+
+            {/* Right: counter + download */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginLeft: 8 }}>
+              {fsMedia.length > 1 && (
+                <span style={{ color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 600 }}>
+                  {fsIndex + 1}/{fsMedia.length}
+                </span>
+              )}
+              <button onClick={handleDownload} disabled={downloading} style={{
+                background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)",
+                color: "#fff", borderRadius: 10, padding: "6px 12px",
+                fontSize: 12, fontWeight: 700, cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 4,
+              }}>
+                {downloading ? "⏳" : "⬇️"} {downloading ? "..." : "Save"}
+              </button>
+              <button onClick={closeFullscreen} style={{
+                background: "rgba(255,255,255,0.15)", border: "none",
+                color: "#fff", borderRadius: 8, width: 32, height: 32,
+                fontSize: 18, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>✕</button>
+            </div>
+          </div>
+
+          {/* Media */}
+          <div onClick={e => e.stopPropagation()} style={{ width: "100%", background: "#000" }}>
+            {isVideo(fsSrc) ? (
+              <video src={fsSrc} controls autoPlay
+                style={{ width: "100%", maxHeight: "55vh", objectFit: "contain", display: "block" }}
+              />
+            ) : (
+              <img src={fsSrc} alt={fsProduct.name}
+                style={{ width: "100%", maxHeight: "55vh", objectFit: "contain", display: "block", padding: 8, boxSizing: "border-box" }}
+              />
+            )}
+          </div>
+
+          {/* Nav arrows + dots */}
+          {fsMedia.length > 1 && (
+            <div onClick={e => e.stopPropagation()} style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 16, padding: "10px 0",
+            }}>
+              <button onClick={fsPrev} style={{
+                background: "rgba(239,68,68,0.85)", border: "none", color: "#fff",
+                borderRadius: "50%", width: 38, height: 38, fontSize: 20, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>‹</button>
+              <div style={{ display: "flex", gap: 6 }}>
+                {fsMedia.map((_, i) => (
+                  <div key={i} onClick={() => setFsIndex(i)} style={{
+                    width: i === fsIndex ? 18 : 7, height: 7, borderRadius: 4,
+                    background: i === fsIndex ? "#ef4444" : "rgba(255,255,255,0.4)",
+                    transition: "all 0.3s ease", cursor: "pointer",
+                  }} />
+                ))}
+              </div>
+              <button onClick={fsNext} style={{
+                background: "rgba(239,68,68,0.85)", border: "none", color: "#fff",
+                borderRadius: "50%", width: 38, height: 38, fontSize: 20, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>›</button>
+            </div>
+          )}
+
+          {/* Description section */}
+          {(fsProduct.short_description || fsProduct.long_description) && (
+            <div onClick={e => e.stopPropagation()} style={{
+              margin: "0 12px 12px", background: "rgba(255,255,255,0.08)",
+              borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", overflow: "hidden",
+            }}>
+              <button
+                onClick={() => setShowDesc(v => !v)}
+                style={{
+                  width: "100%", background: "none", border: "none",
+                  color: "#fff", padding: "10px 14px",
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  fontSize: 13, fontWeight: 600, cursor: "pointer",
+                }}
+              >
+                <span>📋 Description</span>
+                <span style={{ fontSize: 16 }}>{showDesc ? "▲" : "▼"}</span>
+              </button>
+              {showDesc && (
+                <div style={{ padding: "0 14px 12px" }}>
+                  {fsProduct.short_description && (
+                    <div style={{
+                      color: "rgba(255,255,255,0.95)", fontSize: 13, fontWeight: 600,
+                      marginBottom: 8, lineHeight: 1.4,
+                    }}>{fsProduct.short_description}</div>
+                  )}
+                  {fsProduct.long_description && (
+                    <div style={{
+                      color: "rgba(255,255,255,0.75)", fontSize: 12, lineHeight: 1.6,
+                      whiteSpace: "pre-wrap",
+                    }}>{fsProduct.long_description}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Price details in fullscreen */}
+          <div onClick={e => e.stopPropagation()} style={{
+            margin: "0 12px 24px", background: "rgba(255,255,255,0.08)",
+            borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", padding: "12px 14px",
+          }}>
+            {staff ? (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>MRP</span>
+                  <span style={{ color: "#fff", fontSize: 12, fontWeight: 600 }}>₹{fsProduct.mrp}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>Retail Price</span>
+                  <span style={{ color: "#fff", fontSize: 12, fontWeight: 600 }}>₹{fsProduct.price}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, background: "rgba(239,68,68,0.2)", borderRadius: 8, padding: "4px 8px" }}>
+                  <span style={{ color: "#fca5a5", fontSize: 13, fontWeight: 700 }}>W/S Price</span>
+                  <span style={{ color: "#fff", fontSize: 14, fontWeight: 800 }}>₹{fsProduct.wholesale_price}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>Purchase Price</span>
+                  <span style={{ color: "#fff", fontSize: 12, fontWeight: 600 }}>₹{fsProduct.purchase_price}</span>
+                </div>
+                {Array.isArray(fsProduct.vendors) && fsProduct.vendors.length > 0 && (
+                  <div style={{ marginTop: 10, borderTop: "1px solid rgba(255,255,255,0.15)", paddingTop: 8 }}>
+                    <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 10, fontWeight: 700, marginBottom: 4, letterSpacing: 0.5 }}>VENDOR PRICES</div>
+                    {fsProduct.vendors.map((v: any, i: number) => (
+                      <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}>{v.name}</span>
+                        <span style={{ color: "#fff", fontSize: 12, fontWeight: 600 }}>₹{v.price}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>MRP</span>
+                  <span style={{ color: "#fff", fontSize: 12, fontWeight: 600 }}>₹{fsProduct.mrp}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", background: "rgba(239,68,68,0.2)", borderRadius: 8, padding: "4px 8px" }}>
+                  <span style={{ color: "#fca5a5", fontSize: 13, fontWeight: 700 }}>W/S Price</span>
+                  <span style={{ color: "#fff", fontSize: 14, fontWeight: 800 }}>₹{fsProduct.wholesale_price}</span>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Login Modal */}
+      {showLogin && (
+        <StaffLogin
+          onSuccess={onStaffChange}
+          onClose={onHideLogin}
+        />
       )}
     </div>
   );
