@@ -56,6 +56,20 @@ async function getProductsFromDB(): Promise<any[]> {
   });
 }
 
+
+function pricePill(bg: string): React.CSSProperties {
+  return {
+    display: "inline-block",
+    background: bg,
+    color: "#fff",
+    borderRadius: 20,
+    padding: "4px 10px",
+    fontSize: 12,
+    fontWeight: 700,
+    whiteSpace: "nowrap" as const,
+  };
+}
+
 interface Props {
   staff: any;
   showLogin: boolean;
@@ -514,46 +528,31 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
             borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", padding: "12px 14px",
           }}>
             {staff ? (
-              <>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                  <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>MRP</span>
-                  <span style={{ color: "#fff", fontSize: 12, fontWeight: 600 }}>₹{fsProduct.mrp}</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <span style={pricePill("#6b7280")}>MRP ₹{fsProduct.mrp}</span>
+                  <span style={pricePill("#2563eb")}>Retail ₹{fsProduct.price}</span>
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                  <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>Retail Price</span>
-                  <span style={{ color: "#fff", fontSize: 12, fontWeight: 600 }}>₹{fsProduct.price}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, background: "rgba(239,68,68,0.2)", borderRadius: 8, padding: "4px 8px" }}>
-                  <span style={{ color: "#fca5a5", fontSize: 13, fontWeight: 700 }}>W/S Price</span>
-                  <span style={{ color: "#fff", fontSize: 14, fontWeight: 800 }}>₹{fsProduct.wholesale_price}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                  <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>Purchase Price</span>
-                  <span style={{ color: "#fff", fontSize: 12, fontWeight: 600 }}>₹{fsProduct.purchase_price}</span>
-                </div>
+                <span style={{ ...pricePill("#dc2626"), fontSize: 14, padding: "5px 14px" }}>W/S ₹{fsProduct.wholesale_price}</span>
+                {fsProduct.purchase_price && (
+                  <span style={pricePill("#16a34a")}>Purchase ₹{fsProduct.purchase_price}</span>
+                )}
                 {Array.isArray(fsProduct.vendors) && fsProduct.vendors.length > 0 && (
-                  <div style={{ marginTop: 10, borderTop: "1px solid rgba(255,255,255,0.15)", paddingTop: 8 }}>
-                    <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 10, fontWeight: 700, marginBottom: 4, letterSpacing: 0.5 }}>VENDOR PRICES</div>
-                    {fsProduct.vendors.map((v: any, i: number) => (
-                      <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                        <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}>{v.name}</span>
-                        <span style={{ color: "#fff", fontSize: 12, fontWeight: 600 }}>₹{v.price}</span>
-                      </div>
-                    ))}
+                  <div style={{ marginTop: 4, borderTop: "1px solid rgba(255,255,255,0.15)", paddingTop: 8 }}>
+                    <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 10, fontWeight: 700, marginBottom: 6, letterSpacing: 0.5 }}>VENDOR PRICES</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {fsProduct.vendors.map((v: any, i: number) => (
+                        <span key={i} style={pricePill("#7c3aed")}>{v.name} ₹{v.price}</span>
+                      ))}
+                    </div>
                   </div>
                 )}
-              </>
+              </div>
             ) : (
-              <>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                  <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>MRP</span>
-                  <span style={{ color: "#fff", fontSize: 12, fontWeight: 600 }}>₹{fsProduct.mrp}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", background: "rgba(239,68,68,0.2)", borderRadius: 8, padding: "4px 8px" }}>
-                  <span style={{ color: "#fca5a5", fontSize: 13, fontWeight: 700 }}>W/S Price</span>
-                  <span style={{ color: "#fff", fontSize: 14, fontWeight: 800 }}>₹{fsProduct.wholesale_price}</span>
-                </div>
-              </>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={pricePill("#6b7280")}>MRP ₹{fsProduct.mrp}</span>
+                <span style={{ ...pricePill("#dc2626"), fontSize: 14, padding: "5px 14px" }}>W/S ₹{fsProduct.wholesale_price}</span>
+              </div>
             )}
           </div>
         </div>

@@ -13,6 +13,20 @@ interface Props {
   onImageClick: (index: number) => void;
 }
 
+
+function pricePill(bg: string): React.CSSProperties {
+  return {
+    display: "inline-block",
+    background: bg,
+    color: "#fff",
+    borderRadius: 20,
+    padding: "3px 8px",
+    fontSize: 11,
+    fontWeight: 700,
+    whiteSpace: "nowrap" as const,
+  };
+}
+
 export default function ProductCard({ product, staff, onImageClick }: Props) {
   const media = [...(product.image_url || []), ...(product.video_url ? [product.video_url] : [])];
   const [current, setCurrent] = useState(0);
@@ -118,46 +132,30 @@ export default function ProductCard({ product, staff, onImageClick }: Props) {
         }}>{product.name}</div>
 
         {staff ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 10, color: "#6b7280" }}>MRP</span>
-              <span style={{ fontSize: 10, fontWeight: 600, color: "#374151" }}>₹{product.mrp}</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              <span style={pricePill("#6b7280")}>MRP ₹{product.mrp}</span>
+              <span style={pricePill("#2563eb")}>Retail ₹{product.price}</span>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 10, color: "#6b7280" }}>Retail</span>
-              <span style={{ fontSize: 10, fontWeight: 600, color: "#374151" }}>₹{product.price}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", background: "#fff5f5", borderRadius: 6, padding: "3px 5px", marginTop: 1 }}>
-              <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 700 }}>W/S Price</span>
-              <span style={{ fontSize: 12, fontWeight: 800, color: "#dc2626" }}>₹{product.wholesale_price}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 10, color: "#6b7280" }}>Purchase</span>
-              <span style={{ fontSize: 10, fontWeight: 600, color: "#374151" }}>₹{product.purchase_price}</span>
-            </div>
-
+            <span style={{ ...pricePill("#dc2626"), fontSize: 13, fontWeight: 800, padding: "4px 10px" }}>W/S ₹{product.wholesale_price}</span>
+            {product.purchase_price && (
+              <span style={pricePill("#16a34a")}>Purchase ₹{product.purchase_price}</span>
+            )}
             {vendors.length > 0 && (
-              <div style={{ marginTop: 5, borderTop: "1px dashed #fee2e2", paddingTop: 4 }}>
+              <div style={{ marginTop: 2, borderTop: "1px dashed #e5e7eb", paddingTop: 4 }}>
                 <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, marginBottom: 3, letterSpacing: 0.5 }}>VENDORS</div>
-                {vendors.map((v, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-                    <span style={{ fontSize: 10, color: "#6b7280" }}>{v.name}</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "#374151" }}>₹{v.price}</span>
-                  </div>
-                ))}
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {vendors.map((v, i) => (
+                    <span key={i} style={pricePill("#7c3aed")} title={v.name}>{v.name.split(" ")[0]} ₹{v.price}</span>
+                  ))}
+                </div>
               </div>
             )}
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 10, color: "#6b7280" }}>MRP</span>
-              <span style={{ fontSize: 10, fontWeight: 600, color: "#374151" }}>₹{product.mrp}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", background: "#fff5f5", borderRadius: 6, padding: "3px 5px" }}>
-              <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 700 }}>W/S Price</span>
-              <span style={{ fontSize: 12, fontWeight: 800, color: "#dc2626" }}>₹{product.wholesale_price}</span>
-            </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={pricePill("#6b7280")}>MRP ₹{product.mrp}</span>
+            <span style={{ ...pricePill("#dc2626"), fontSize: 13, fontWeight: 800, padding: "4px 10px" }}>W/S ₹{product.wholesale_price}</span>
           </div>
         )}
       </div>
