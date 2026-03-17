@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "app.vercel.janaki_guru_wholesale.twa",
+        "sha256_cert_fingerprints": ["6E:2A:CD:00:D6:F4:8F:FA:22:BA:79:56:07:98:26:B5:EB:CD:8B:72:A4:E0:B3:52:7B:4D:11:FE:F4:53:4C:03"]
+      }
+    }]
