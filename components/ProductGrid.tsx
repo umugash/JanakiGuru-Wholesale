@@ -9,14 +9,39 @@ function isVideo(url: string) {
 
 function parseCategories(val: any): string[] {
   if (!val) return [];
-  if (Array.isArray(val)) return val.map(String).filter(Boolean);
-  if (typeof val === "string") {
-    try {
-      const parsed = JSON.parse(val);
-      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
-    } catch {}
-    return val.split(",").map(s => s.trim()).filter(Boolean);
+
+  // Already an array
+  if (Array.isArray(val)) {
+    return val.flatMap((v: any) => parseCategories(v)).filter(Boolean);
   }
+
+  if (typeof val === "string") {
+    let str = val.trim();
+
+    // Remove all backslashes
+    str = str.replace(/\\/g, "");
+
+    // Try JSON parse (handles ["elite","note"] stored as string)
+    try {
+      const parsed = JSON.parse(str);
+      if (Array.isArray(parsed)) {
+        return parsed.flatMap((v: any) => parseCategories(v)).filter(Boolean);
+      }
+      if (typeof parsed === "string") {
+        return [parsed.trim()].filter(Boolean);
+      }
+    } catch {}
+
+    // Strip leading/trailing [ ] " ' characters
+    str = str.replace(/^[\["'\s]+|[\]"'\s]+$/g, "").trim();
+
+    // Split by comma
+    return str
+      .split(",")
+      .map((s: string) => s.replace(/^[\["'\s]+|[\]"'\s]+$/g, "").trim())
+      .filter(Boolean);
+  }
+
   return [];
 }
 
