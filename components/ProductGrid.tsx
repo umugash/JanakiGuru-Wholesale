@@ -91,7 +91,7 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
   const [fsIndex, setFsIndex] = useState(0);
   const [fsClosing, setFsClosing] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const [showDesc, setShowDesc] = useState(false);
+
 
   const supabaseRef = useRef<any>(null);
 
@@ -168,7 +168,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
     setFsProduct(product);
     setFsIndex(index);
     setFsClosing(false);
-    setShowDesc(false);
     document.body.style.overflow = "hidden";
     // Push history state for back button
     window.history.pushState({ fullscreen: true }, "");
@@ -180,8 +179,7 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
     setTimeout(() => {
       setFsProduct(null);
       setFsClosing(false);
-      setShowDesc(false);
-      document.body.style.overflow = "";
+        document.body.style.overflow = "";
     }, 280);
   }, []);
 
@@ -485,76 +483,30 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
             </div>
           )}
 
-          {/* Description section */}
+          {/* Description section - always visible */}
           {(fsProduct.short_description || fsProduct.long_description) && (
             <div onClick={e => e.stopPropagation()} style={{
               margin: "0 12px 12px", background: "rgba(255,255,255,0.08)",
-              borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", overflow: "hidden",
+              borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)",
+              padding: "12px 14px",
             }}>
-              <button
-                onClick={() => setShowDesc(v => !v)}
-                style={{
-                  width: "100%", background: "none", border: "none",
-                  color: "#fff", padding: "10px 14px",
-                  display: "flex", justifyContent: "space-between", alignItems: "center",
-                  fontSize: 13, fontWeight: 600, cursor: "pointer",
-                }}
-              >
-                <span>📋 Description</span>
-                <span style={{ fontSize: 16 }}>{showDesc ? "▲" : "▼"}</span>
-              </button>
-              {showDesc && (
-                <div style={{ padding: "0 14px 12px" }}>
-                  {fsProduct.short_description && (
-                    <div style={{
-                      color: "rgba(255,255,255,0.95)", fontSize: 13, fontWeight: 600,
-                      marginBottom: 8, lineHeight: 1.4,
-                    }}>{fsProduct.short_description}</div>
-                  )}
-                  {fsProduct.long_description && (
-                    <div style={{
-                      color: "rgba(255,255,255,0.75)", fontSize: 12, lineHeight: 1.6,
-                      whiteSpace: "pre-wrap",
-                    }}>{fsProduct.long_description}</div>
-                  )}
-                </div>
+              <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 10, fontWeight: 700, letterSpacing: 0.8, marginBottom: 8 }}>📋 DESCRIPTION</div>
+              {fsProduct.short_description && (
+                <div style={{
+                  color: "#fff", fontSize: 13, fontWeight: 600,
+                  marginBottom: fsProduct.long_description ? 8 : 0, lineHeight: 1.5,
+                }}>{fsProduct.short_description}</div>
+              )}
+              {fsProduct.long_description && (
+                <div style={{
+                  color: "rgba(255,255,255,0.75)", fontSize: 12, lineHeight: 1.7,
+                  whiteSpace: "pre-wrap",
+                }}>{fsProduct.long_description}</div>
               )}
             </div>
           )}
 
-          {/* Price details in fullscreen */}
-          <div onClick={e => e.stopPropagation()} style={{
-            margin: "0 12px 24px", background: "rgba(255,255,255,0.08)",
-            borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", padding: "12px 14px",
-          }}>
-            {staff ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <span style={pricePill("#6b7280")}>MRP ₹{fsProduct.mrp}</span>
-                  <span style={pricePill("#2563eb")}>Retail ₹{fsProduct.price}</span>
-                </div>
-                <span style={{ ...pricePill("#dc2626"), fontSize: 14, padding: "5px 14px" }}>W/S ₹{fsProduct.wholesale_price}</span>
-                {fsProduct.purchase_price && (
-                  <span style={pricePill("#16a34a")}>Purchase ₹{fsProduct.purchase_price}</span>
-                )}
-                {Array.isArray(fsProduct.vendors) && fsProduct.vendors.length > 0 && (
-                  <div style={{ marginTop: 4, borderTop: "1px solid rgba(255,255,255,0.15)", paddingTop: 8 }}>
-                    <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 10, fontWeight: 700, marginBottom: 6, letterSpacing: 0.5 }}>VENDOR PRICES</div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {fsProduct.vendors.map((v: any, i: number) => (
-                        <span key={i} style={pricePill("#7c3aed")}>{v.name} ₹{v.price}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <span style={pricePill("#6b7280")}>MRP ₹{fsProduct.mrp}</span>
-                <span style={{ ...pricePill("#dc2626"), fontSize: 14, padding: "5px 14px" }}>W/S ₹{fsProduct.wholesale_price}</span>
-              </div>
-            )}
-          </div>
+          <div style={{ height: 24 }} />
         </div>
       )}
 
