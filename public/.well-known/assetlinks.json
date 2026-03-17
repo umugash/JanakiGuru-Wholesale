@@ -1,8 +1,8 @@
 [{
-      "relation": ["delegate_permission/common.handle_all_urls"],
-      "target": {
-        "namespace": "android_app",
-        "package_name": "app.vercel.janaki_guru_wholesale.twa",
-        "sha256_cert_fingerprints": ["6E:2A:CD:00:D6:F4:8F:FA:22:BA:79:56:07:98:26:B5:EB:CD:8B:72:A4:E0:B3:52:7B:4D:11:FE:F4:53:4C:03"]
-      }
-    }]
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "app.vercel.janaki_guru_wholesale.twa",
+    "sha256_cert_fingerprints": ["D1:C4:D4:B7:22:BD:16:48:C0:83:6C:E4:56:FA:0E:FF:DA:3B:5D:5F:77:18:7D:92:46:43:B8:7A:E1:3F:3F:24"]
+  }
+}]
