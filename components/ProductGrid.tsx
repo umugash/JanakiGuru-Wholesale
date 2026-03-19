@@ -84,6 +84,7 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
   const [activeCategory, setActiveCategory] = useState("All");
   const [loading, setLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
+  const [debugMsg, setDebugMsg] = useState("");
   const [cipherKey, setCipherKey] = useState("ROYALTIMES");
 
   // Fullscreen
@@ -132,38 +133,41 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
   async function loadProducts(supabase: any) {
     setLoading(true);
 
-    // Always try Supabase FIRST regardless of navigator.onLine
-    // navigator.onLine can be unreliable in PWA/TWA apps
+    // Always try Supabase FIRST
     try {
       const { data, error } = await supabase
         .from("products")
         .select("id,name,mrp,price,wholesale_price,purchase_price,category,image_url,video_url,keywords,created_at,short_description,long_description,vendors,barcode")
         .order("created_at", { ascending: false });
 
-      if (!error && data && data.length > 0) {
-        // Fresh data from Supabase — update UI and cache
+      if (error) {
+        // Show exact Supabase error so we can debug
+        setIsOffline(true);
+        setDebugMsg("Supabase error: " + error.message + " | code: " + error.code);
+        const cached = await getProductsFromDB().catch(() => []);
+        if (cached.length > 0) setProducts(cached);
+        setLoading(false);
+        return;
+      }
+
+      if (data && data.length >= 0) {
         setProducts(data);
         setIsOffline(false);
+        setDebugMsg("");
         await saveProductsToDB(data);
         setLoading(false);
         return;
       }
-    } catch {
-      // Network failed — fall through to cache
+    } catch (err: any) {
+      setDebugMsg("Fetch exception: " + (err?.message || String(err)));
     }
 
-    // Supabase failed — load from IndexedDB cache
+    // Fall back to cache
     try {
       const cached = await getProductsFromDB();
-      if (cached.length > 0) {
-        setProducts(cached);
-        setIsOffline(true);
-      } else {
-        setProducts([]);
-      }
-    } catch {
-      setProducts([]);
-    }
+      if (cached.length > 0) { setProducts(cached); setIsOffline(true); }
+      else setProducts([]);
+    } catch { setProducts([]); }
     setLoading(false);
   }
 
@@ -329,6 +333,11 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
       {isOffline && (
         <div style={{ background: "#fef3c7", borderBottom: "1px solid #f59e0b", padding: "6px 16px", textAlign: "center", fontSize: 12, color: "#92400e" }}>
           📴 Offline — showing cached data
+        </div>
+      )}
+      {debugMsg && (
+        <div style={{ background: "#fef2f2", borderBottom: "1px solid #fca5a5", padding: "6px 16px", fontSize: 11, color: "#dc2626", wordBreak: "break-all" }}>
+          🔴 {debugMsg}
         </div>
       )}
 
