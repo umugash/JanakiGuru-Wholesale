@@ -171,107 +171,78 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
     setLoading(false);
   }
 
-  // Barcode scanner functions
+  // Barcode scanner - uses canvas + BarcodeDetector (most reliable on Android)
   async function openScanner() {
     setScannerOpen(true);
     setScannerError("");
     setScannerLoading(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+        video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } }
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        await videoRef.current.play();
       }
       setScannerLoading(false);
-      startZxingScanner();
-    } catch (err) {
-      setScannerError("Camera access denied. Please allow camera permission.");
+      startCanvasDetector();
+    } catch {
+      setScannerError("Camera access denied. Please allow camera permission and try again.");
       setScannerLoading(false);
     }
   }
 
-  async function startZxingScanner() {
-    // Try ZXing first
-    try {
-      const ZXingModule = await import("@zxing/library").catch(() => null);
-      if (ZXingModule && videoRef.current) {
-        const codeReader = new (ZXingModule as any).BrowserMultiFormatReader();
-        scannerRef.current = codeReader;
-        await codeReader.decodeFromVideoElement(videoRef.current, (result: any, err: any) => {
-          if (result) {
-            handleBarcodeResult(result.getText());
-          }
-        });
-        return;
-      }
-    } catch {}
-
-    // Fallback to native BarcodeDetector
-    startNativeBarcodeDetector();
-  }
-
-  function startNativeBarcodeDetector() {
-    if (!("BarcodeDetector" in window)) {
-      // Last resort: use canvas-based polling with ZXing
-      startCanvasScanner();
-      return;
-    }
-    const detector = new (window as any).BarcodeDetector({
-      formats: ["ean_13", "ean_8", "qr_code", "code_128", "code_39", "upc_a", "upc_e", "itf", "codabar"]
-    });
-    let scanning = true;
-    const scan = async () => {
-      if (!scanning || !videoRef.current) return;
-      try {
-        const barcodes = await detector.detect(videoRef.current);
-        if (barcodes.length > 0) {
-          scanning = false;
-          handleBarcodeResult(barcodes[0].rawValue);
-          return;
-        }
-      } catch {}
-      if (scanning) requestAnimationFrame(scan);
-    };
-    requestAnimationFrame(scan);
-    scannerRef.current = { stop: () => { scanning = false; } };
-  }
-
-  function startCanvasScanner() {
-    // Canvas-based fallback using ZXing
+  function startCanvasDetector() {
     const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     let scanning = true;
+    let frameCount = 0;
+
+    const hasBarcodeDetector = "BarcodeDetector" in window;
+    let detector: any = null;
+    if (hasBarcodeDetector) {
+      detector = new (window as any).BarcodeDetector({
+        formats: ["ean_13", "ean_8", "qr_code", "code_128", "code_39", "upc_a", "upc_e", "itf", "codabar", "aztec", "data_matrix"]
+      });
+    }
 
     const scan = async () => {
       if (!scanning || !videoRef.current || !ctx) return;
-      if (videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
-        canvas.width = videoRef.current.videoWidth;
-        canvas.height = videoRef.current.videoHeight;
-        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-        try {
-          const ZXingModule = await import("@zxing/library").catch(() => null);
-          if (ZXingModule) {
-            const reader = new (ZXingModule as any).BrowserMultiFormatReader();
-            const imageData = canvas.toDataURL("image/png");
-            const img = new Image();
-            img.onload = async () => {
-              try {
-                const result = await reader.decodeFromImageElement(img);
-                if (result) { scanning = false; handleBarcodeResult(result.getText()); return; }
-              } catch {}
-              if (scanning) setTimeout(scan, 500);
-            };
-            img.src = imageData;
+      if (videoRef.current.readyState < 2) {
+        // Video not ready yet
+        setTimeout(scan, 200);
+        return;
+      }
+
+      frameCount++;
+      // Process every 3rd frame to save CPU
+      if (frameCount % 3 !== 0) {
+        requestAnimationFrame(scan);
+        return;
+      }
+
+      canvas.width = videoRef.current.videoWidth || 640;
+      canvas.height = videoRef.current.videoHeight || 480;
+      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+
+      try {
+        if (hasBarcodeDetector && detector) {
+          // Use native BarcodeDetector on canvas
+          const barcodes = await detector.detect(canvas);
+          if (barcodes.length > 0) {
+            scanning = false;
+            handleBarcodeResult(barcodes[0].rawValue);
             return;
           }
-        } catch {}
-      }
-      if (scanning) setTimeout(scan, 500);
+        }
+      } catch {}
+
+      if (scanning) requestAnimationFrame(scan);
     };
-    scan();
+
+    // Start scanning after short delay to let camera warm up
+    setTimeout(() => requestAnimationFrame(scan), 500);
     scannerRef.current = { stop: () => { scanning = false; } };
   }
 
@@ -529,8 +500,13 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
             )}
           </div>
 
-          <div style={{ background: "#111", padding: "12px 16px", textAlign: "center", color: "rgba(255,255,255,0.6)", fontSize: 12 }}>
-            Point camera at barcode to scan automatically
+          <div style={{ background: "#111", padding: "12px 16px", textAlign: "center" }}>
+            <div style={{ color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+              📷 Point camera at barcode
+            </div>
+            <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>
+              Hold steady — scanning automatically
+            </div>
           </div>
 
           <style>{`
