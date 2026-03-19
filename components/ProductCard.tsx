@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { encodePrice, encodeWholesalePrices, parseWholesalePrices } from "@/lib/cipher";
 
 function isVideo(url: string) {
   return !!(url?.match(/\.(mp4|webm|ogg|mov)$/i) || url?.includes("video"));
@@ -10,9 +11,9 @@ interface Vendor { name: string; price: number; }
 interface Props {
   product: any;
   staff: any;
+  cipherKey: string;
   onImageClick: (index: number) => void;
 }
-
 
 function pricePill(bg: string): React.CSSProperties {
   return {
@@ -27,12 +28,11 @@ function pricePill(bg: string): React.CSSProperties {
   };
 }
 
-export default function ProductCard({ product, staff, onImageClick }: Props) {
+export default function ProductCard({ product, staff, cipherKey, onImageClick }: Props) {
   const media = [...(product.image_url || []), ...(product.video_url ? [product.video_url] : [])];
   const [current, setCurrent] = useState(0);
   const vendors: Vendor[] = Array.isArray(product.vendors) ? product.vendors : [];
 
-  // Check if this product was recently updated (within 7 days)
   const isNew = product.created_at &&
     (Date.now() - new Date(product.created_at).getTime()) < 7 * 24 * 60 * 60 * 1000;
 
@@ -47,13 +47,23 @@ export default function ProductCard({ product, staff, onImageClick }: Props) {
 
   const src = media[current] || "";
 
+  // Encoded prices
+  const encodedWS = encodeWholesalePrices(product.wholesale_price, cipherKey);
+  const encodedPurchase = product.purchase_price
+    ? encodePrice(product.purchase_price, cipherKey)
+    : null;
+
+  // Multiple W/S prices
+  const wsPrices = parseWholesalePrices(product.wholesale_price);
+  const hasMultipleWS = wsPrices.length > 1;
+  const wsLabels = ["Single", "Bundle", "Pack", "Bulk", "Special"];
+
   return (
     <div style={{
       background: "#fff", borderRadius: 14, overflow: "hidden",
       boxShadow: "0 2px 10px rgba(220,38,38,0.07)", border: "1.5px solid #fee2e2",
       display: "flex", flexDirection: "column", position: "relative",
     }}>
-      {/* NEW badge */}
       {isNew && (
         <div style={{
           position: "absolute", top: 6, left: 6, zIndex: 20,
@@ -63,11 +73,9 @@ export default function ProductCard({ product, staff, onImageClick }: Props) {
         }}>NEW</div>
       )}
 
-      {/* Square image area */}
-      <div
-        onClick={() => onImageClick(current)}
-        style={{ width: "100%", paddingBottom: "100%", position: "relative", background: "#fff5f5", cursor: "zoom-in" }}
-      >
+      {/* Image area */}
+      <div onClick={() => onImageClick(current)}
+        style={{ width: "100%", paddingBottom: "100%", position: "relative", background: "#fff5f5", cursor: "zoom-in" }}>
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
           {media.length === 0 ? (
             <span style={{ fontSize: 32 }}>📦</span>
@@ -81,22 +89,17 @@ export default function ProductCard({ product, staff, onImageClick }: Props) {
           )}
         </div>
 
-        {/* Dots */}
-        {media.length > 1 && (
-          <div style={{ position: "absolute", bottom: 6, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 4, zIndex: 10 }}>
-            {media.map((_, i) => (
-              <div key={i} onClick={e => { e.stopPropagation(); setCurrent(i); }} style={{
-                width: i === current ? 14 : 5, height: 5, borderRadius: 3,
-                background: i === current ? "#ef4444" : "rgba(255,255,255,0.85)",
-                transition: "width 0.3s ease", cursor: "pointer",
-              }} />
-            ))}
-          </div>
-        )}
-
-        {/* Arrows */}
         {media.length > 1 && (
           <>
+            <div style={{ position: "absolute", bottom: 6, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 4, zIndex: 10 }}>
+              {media.map((_, i) => (
+                <div key={i} onClick={e => { e.stopPropagation(); setCurrent(i); }} style={{
+                  width: i === current ? 14 : 5, height: 5, borderRadius: 3,
+                  background: i === current ? "#ef4444" : "rgba(255,255,255,0.85)",
+                  transition: "width 0.3s ease", cursor: "pointer",
+                }} />
+              ))}
+            </div>
             <button onClick={prevMedia} style={{
               position: "absolute", left: 4, top: "50%", transform: "translateY(-50%)",
               background: "rgba(255,255,255,0.9)", border: "1.5px solid #fca5a5",
@@ -133,29 +136,67 @@ export default function ProductCard({ product, staff, onImageClick }: Props) {
 
         {staff ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {/* MRP + Retail as plain pills */}
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
               <span style={pricePill("#6b7280")}>MRP ₹{product.mrp}</span>
               <span style={pricePill("#2563eb")}>Retail ₹{product.price}</span>
             </div>
-            <span style={{ ...pricePill("#dc2626"), fontSize: 13, fontWeight: 800, padding: "4px 10px" }}>W/S ₹{product.wholesale_price}</span>
-            {product.purchase_price && (
-              <span style={pricePill("#16a34a")}>Purchase ₹{product.purchase_price}</span>
+
+            {/* W/S — encoded, single or multiple */}
+            {hasMultipleWS ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {wsPrices.map((p, i) => (
+                  <span key={i} style={{ ...pricePill("#dc2626"), fontSize: i === 0 ? 12 : 11, padding: i === 0 ? "4px 10px" : "3px 8px" }}>
+                    {wsLabels[i] || `Option${i+1}`}: {encodePrice(p, cipherKey)}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              encodedWS && (
+                <span style={{ ...pricePill("#dc2626"), fontSize: 13, fontWeight: 800, padding: "4px 10px" }}>
+                  W/S {encodedWS}
+                </span>
+              )
             )}
+
+            {/* Purchase — encoded */}
+            {encodedPurchase && (
+              <span style={pricePill("#16a34a")}>
+                Purchase {encodedPurchase}
+              </span>
+            )}
+
+            {/* Vendors — encoded */}
             {vendors.length > 0 && (
               <div style={{ marginTop: 2, borderTop: "1px dashed #e5e7eb", paddingTop: 4 }}>
                 <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, marginBottom: 3, letterSpacing: 0.5 }}>VENDORS</div>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                   {vendors.map((v, i) => (
-                    <span key={i} style={pricePill("#7c3aed")} title={v.name}>{v.name.split(" ")[0]} ₹{v.price}</span>
+                    <span key={i} style={pricePill("#7c3aed")}>
+                      {v.name.split(" ")[0]} {encodePrice(v.price, cipherKey)}
+                    </span>
                   ))}
                 </div>
               </div>
             )}
           </div>
         ) : (
+          // Guest: plain prices
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={pricePill("#6b7280")}>MRP ₹{product.mrp}</span>
-            <span style={{ ...pricePill("#dc2626"), fontSize: 13, fontWeight: 800, padding: "4px 10px" }}>W/S ₹{product.wholesale_price}</span>
+            {hasMultipleWS ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {wsPrices.map((p, i) => (
+                  <span key={i} style={{ ...pricePill("#dc2626"), fontSize: i === 0 ? 12 : 11 }}>
+                    {wsLabels[i]}: ₹{p}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span style={{ ...pricePill("#dc2626"), fontSize: 13, fontWeight: 800, padding: "4px 10px" }}>
+                W/S ₹{product.wholesale_price}
+              </span>
+            )}
           </div>
         )}
       </div>

@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import ProductCard from "./ProductCard";
 import StaffLogin from "./StaffLogin";
+import { encodePrice, encodeWholesalePrices, parseWholesalePrices, setCachedKey, getCachedKey } from "@/lib/cipher";
 
 function isVideo(url: string) {
   return !!(url?.match(/\.(mp4|webm|ogg|mov)$/i) || url?.includes("video"));
@@ -9,42 +10,23 @@ function isVideo(url: string) {
 
 function parseCategories(val: any): string[] {
   if (!val) return [];
-
-  // Already an array
   if (Array.isArray(val)) {
     return val.flatMap((v: any) => parseCategories(v)).filter(Boolean);
   }
-
   if (typeof val === "string") {
-    let str = val.trim();
-
-    // Remove all backslashes
-    str = str.replace(/\\/g, "");
-
-    // Try JSON parse (handles ["elite","note"] stored as string)
+    let str = val.trim().replace(/\\/g, "");
     try {
       const parsed = JSON.parse(str);
-      if (Array.isArray(parsed)) {
-        return parsed.flatMap((v: any) => parseCategories(v)).filter(Boolean);
-      }
-      if (typeof parsed === "string") {
-        return [parsed.trim()].filter(Boolean);
-      }
+      if (Array.isArray(parsed)) return parsed.flatMap((v: any) => parseCategories(v)).filter(Boolean);
+      if (typeof parsed === "string") return [parsed.trim()].filter(Boolean);
     } catch {}
-
-    // Strip leading/trailing [ ] " ' characters
-    str = str.replace(/^[\["'\s]+|[\]"'\s]+$/g, "").trim();
-
-    // Split by comma
-    return str
-      .split(",")
-      .map((s: string) => s.replace(/^[\["'\s]+|[\]"'\s]+$/g, "").trim())
-      .filter(Boolean);
+    str = str.replace(/^[\["']+|[\]"']+$/g, "").trim();
+    return str.split(",").map((s: string) => s.replace(/^["'\s\[\]\\]+|["'\s\[\]\\]+$/g, "").trim()).filter(Boolean);
   }
-
   return [];
 }
 
+// IndexedDB helpers
 const DB_NAME = "jg_wholesale_cache";
 const DB_VERSION = 1;
 const STORE_NAME = "products";
@@ -54,9 +36,7 @@ function openDB(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = e => {
       const db = (e.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: "id" });
-      }
+      if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME, { keyPath: "id" });
     };
     req.onsuccess = e => resolve((e.target as IDBOpenDBRequest).result);
     req.onerror = () => reject(req.error);
@@ -81,16 +61,10 @@ async function getProductsFromDB(): Promise<any[]> {
   });
 }
 
-
 function pricePill(bg: string): React.CSSProperties {
   return {
-    display: "inline-block",
-    background: bg,
-    color: "#fff",
-    borderRadius: 20,
-    padding: "4px 10px",
-    fontSize: 12,
-    fontWeight: 700,
+    display: "inline-block", background: bg, color: "#fff",
+    borderRadius: 20, padding: "4px 10px", fontSize: 12, fontWeight: 700,
     whiteSpace: "nowrap" as const,
   };
 }
@@ -110,34 +84,48 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
   const [activeCategory, setActiveCategory] = useState("All");
   const [loading, setLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
+  const [cipherKey, setCipherKey] = useState("ROYALTIMES");
 
-  // Fullscreen state
+  // Fullscreen
   const [fsProduct, setFsProduct] = useState<any>(null);
   const [fsIndex, setFsIndex] = useState(0);
   const [fsClosing, setFsClosing] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
-
-  const supabaseRef = useRef<any>(null);
+  // Barcode scanner
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannerError, setScannerError] = useState("");
+  const [scannerLoading, setScannerLoading] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const scannerRef = useRef<any>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
-    // Dynamic import supabase to avoid SSR issues
     import("@/lib/supabase").then(({ supabase }) => {
-      supabaseRef.current = supabase;
       loadProducts(supabase);
+      loadCipherKey(supabase);
     });
 
-    const handleOnline = () => { setIsOffline(false); };
+    const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
     if (!navigator.onLine) setIsOffline(true);
-
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
   }, []);
+
+  async function loadCipherKey(supabase: any) {
+    try {
+      const { data } = await supabase.from("cipher_settings").select("cipher_key").eq("id", 1).single();
+      if (data?.cipher_key) {
+        setCipherKey(data.cipher_key.toUpperCase());
+        setCachedKey(data.cipher_key.toUpperCase());
+      }
+    } catch {}
+  }
 
   async function loadProducts(supabase: any) {
     setLoading(true);
@@ -145,95 +133,142 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
       if (navigator.onLine) {
         const { data, error } = await supabase
           .from("products")
-          .select("id,name,mrp,price,wholesale_price,purchase_price,category,image_url,video_url,keywords,created_at,short_description,long_description,vendors")
+          .select("id,name,mrp,price,wholesale_price,purchase_price,category,image_url,video_url,keywords,created_at,short_description,long_description,vendors,barcode")
           .order("created_at", { ascending: false });
-
         if (!error && data) {
           setProducts(data);
           await saveProductsToDB(data);
-        } else {
-          throw new Error("fetch failed");
-        }
-      } else {
-        throw new Error("offline");
-      }
+        } else throw new Error("fetch failed");
+      } else throw new Error("offline");
     } catch {
-      // Load from IndexedDB cache
       try {
         const cached = await getProductsFromDB();
-        if (cached.length > 0) {
-          setProducts(cached);
-          setIsOffline(true);
-        }
-      } catch {
-        setProducts([]);
-      }
+        if (cached.length > 0) { setProducts(cached); setIsOffline(true); }
+      } catch { setProducts([]); }
     }
     setLoading(false);
   }
 
-  // All categories
-  const allCategories = ["All", ...Array.from(new Set(
-    products.flatMap(p => parseCategories(p.category))
-  )).sort()];
+  // Barcode scanner functions
+  async function openScanner() {
+    setScannerOpen(true);
+    setScannerError("");
+    setScannerLoading(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play();
+      }
+      setScannerLoading(false);
+      startZxingScanner();
+    } catch (err) {
+      setScannerError("Camera access denied. Please allow camera permission.");
+      setScannerLoading(false);
+    }
+  }
 
-  // Filtered products
-  const filtered = products.filter(p => {
-    const cats = parseCategories(p.category);
-    const matchCat = activeCategory === "All" || cats.includes(activeCategory);
-    const q = search.toLowerCase();
-    const matchSearch = !q ||
-      p.name?.toLowerCase().includes(q) ||
-      (p.keywords || []).some((k: string) => k?.toLowerCase().includes(q));
-    return matchCat && matchSearch;
-  });
+  async function startZxingScanner() {
+    try {
+      // Dynamically load ZXing
+      const ZXing = await import("@zxing/library" as any).catch(() => null);
+      if (!ZXing || !videoRef.current) return;
 
-  // Fullscreen open
+      const codeReader = new ZXing.BrowserMultiFormatReader();
+      scannerRef.current = codeReader;
+
+      codeReader.decodeFromVideoElement(videoRef.current, (result: any, err: any) => {
+        if (result) {
+          const barcodeText = result.getText();
+          handleBarcodeResult(barcodeText);
+        }
+      });
+    } catch {
+      // Fallback: use BarcodeDetector API if available
+      startNativeBarcodeDetector();
+    }
+  }
+
+  function startNativeBarcodeDetector() {
+    if (!("BarcodeDetector" in window)) {
+      setScannerError("Barcode scanner not supported on this device. Try searching manually.");
+      return;
+    }
+    const detector = new (window as any).BarcodeDetector({ formats: ["ean_13", "ean_8", "qr_code", "code_128", "code_39", "upc_a", "upc_e"] });
+    const scanInterval = setInterval(async () => {
+      if (!videoRef.current || !scannerOpen) { clearInterval(scanInterval); return; }
+      try {
+        const barcodes = await detector.detect(videoRef.current);
+        if (barcodes.length > 0) {
+          clearInterval(scanInterval);
+          handleBarcodeResult(barcodes[0].rawValue);
+        }
+      } catch {}
+    }, 300);
+    scannerRef.current = { stop: () => clearInterval(scanInterval) };
+  }
+
+  function handleBarcodeResult(barcode: string) {
+    closeScanner();
+    // Search by barcode in products
+    const found = products.find(p => p.barcode === barcode || p.keywords?.includes(barcode));
+    if (found) {
+      setSearch(found.name);
+      setActiveCategory("All");
+    } else {
+      // Set search to barcode value so user can see result
+      setSearch(barcode);
+    }
+  }
+
+  function closeScanner() {
+    if (scannerRef.current?.stop) scannerRef.current.stop();
+    if (scannerRef.current?.reset) scannerRef.current.reset();
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setScannerOpen(false);
+    setScannerError("");
+  }
+
+  // Fullscreen
   const openFullscreen = (product: any, index: number) => {
     setFsProduct(product);
     setFsIndex(index);
     setFsClosing(false);
     document.body.style.overflow = "hidden";
-    // Push history state for back button
     window.history.pushState({ fullscreen: true }, "");
   };
 
-  // Fullscreen close
   const closeFullscreen = useCallback(() => {
     setFsClosing(true);
     setTimeout(() => {
       setFsProduct(null);
       setFsClosing(false);
-        document.body.style.overflow = "";
+      document.body.style.overflow = "";
     }, 280);
   }, []);
 
-  // Handle Android back button
   useEffect(() => {
-    const handlePopState = (e: PopStateEvent) => {
-      if (fsProduct) {
-        closeFullscreen();
-      }
-      // If login modal open, close it
-      if (showLogin) {
-        onHideLogin();
-      }
+    const handlePopState = () => {
+      if (fsProduct) closeFullscreen();
+      if (showLogin) onHideLogin();
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, [fsProduct, showLogin, closeFullscreen, onHideLogin]);
 
-  // Download
   async function handleDownload(e: React.MouseEvent) {
     e.stopPropagation();
     if (!fsProduct) return;
     const media = [...(fsProduct.image_url || []), ...(fsProduct.video_url ? [fsProduct.video_url] : [])];
     const url = media[fsIndex];
     if (!url) return;
-    if (!navigator.onLine) {
-      alert("Internet required to download. Please turn on internet and try again.");
-      return;
-    }
+    if (!navigator.onLine) { alert("Internet required to download."); return; }
     setDownloading(true);
     try {
       const response = await fetch(url);
@@ -242,121 +277,96 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
       const filename = fsProduct.name.replace(/[^a-z0-9]/gi, "_").toLowerCase() + "_" + (fsIndex + 1) + "." + ext;
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(url, "_blank");
-    }
+      a.href = blobUrl; a.download = filename;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(blobUrl);
+    } catch { window.open(url, "_blank"); }
     setDownloading(false);
   }
 
-  // Fullscreen navigation
   const getFsMedia = () => {
     if (!fsProduct) return [];
     return [...(fsProduct.image_url || []), ...(fsProduct.video_url ? [fsProduct.video_url] : [])];
   };
-
-  const fsPrev = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const media = getFsMedia();
-    setFsIndex(i => (i - 1 + media.length) % media.length);
-  };
-  const fsNext = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const media = getFsMedia();
-    setFsIndex(i => (i + 1) % media.length);
-  };
-
   const fsMedia = getFsMedia();
   const fsSrc = fsMedia[fsIndex] || "";
 
+  const allCategories = ["All", ...Array.from(new Set(products.flatMap(p => parseCategories(p.category)))).sort()];
+
+  const filtered = products.filter(p => {
+    const cats = parseCategories(p.category);
+    const matchCat = activeCategory === "All" || cats.includes(activeCategory);
+    const q = search.toLowerCase();
+    const matchSearch = !q ||
+      p.name?.toLowerCase().includes(q) ||
+      (p.keywords || []).some((k: string) => k?.toLowerCase().includes(q)) ||
+      p.barcode === q;
+    return matchCat && matchSearch;
+  });
+
+  const wsLabels = ["Single", "Bundle", "Pack", "Bulk", "Special"];
+
   return (
     <div style={{ minHeight: "100dvh", background: "#fff9f9", fontFamily: "system-ui,sans-serif" }}>
-
-      {/* Offline banner */}
       {isOffline && (
-        <div style={{
-          background: "#fef3c7", borderBottom: "1px solid #f59e0b",
-          padding: "6px 16px", textAlign: "center", fontSize: 12, color: "#92400e",
-          display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-        }}>
-          📴 Offline — showing cached data. Turn on internet to sync latest prices.
+        <div style={{ background: "#fef3c7", borderBottom: "1px solid #f59e0b", padding: "6px 16px", textAlign: "center", fontSize: 12, color: "#92400e" }}>
+          📴 Offline — showing cached data
         </div>
       )}
 
       {/* Header */}
-      <div style={{
-        position: "sticky", top: 0, zIndex: 100,
-        background: "linear-gradient(135deg,#ef4444,#b91c1c)",
-        padding: "12px 16px 10px", boxShadow: "0 2px 12px rgba(185,28,28,0.25)",
-      }}>
+      <div style={{ position: "sticky", top: 0, zIndex: 100, background: "linear-gradient(135deg,#ef4444,#b91c1c)", padding: "12px 16px 10px", boxShadow: "0 2px 12px rgba(185,28,28,0.25)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
           <div>
-            <div style={{ color: "#fff", fontWeight: 800, fontSize: 16, letterSpacing: 0.5 }}>
-              🏬 JG Wholesale
-            </div>
-            {staff && (
-              <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>
-                👤 {staff.name}
-              </div>
-            )}
+            <div style={{ color: "#fff", fontWeight: 800, fontSize: 16 }}>🏬 JG Wholesale</div>
+            {staff && <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>👤 {staff.name}</div>}
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {staff ? (
-              <button onClick={onLogout} style={{
-                background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)",
-                color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer",
-              }}>Logout</button>
-            ) : (
-              <button onClick={onShowLogin} style={{
-                background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)",
-                color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer",
-              }}>🔐 Staff Login</button>
-            )}
-          </div>
+          {staff ? (
+            <button onClick={onLogout} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Logout</button>
+          ) : (
+            <button onClick={onShowLogin} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>🔐 Staff Login</button>
+          )}
         </div>
 
-        {/* Search */}
-        <div style={{ position: "relative" }}>
-          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 14 }}>🔍</span>
-          <input
-            placeholder="Search products..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{
-              width: "100%", boxSizing: "border-box",
-              padding: "9px 12px 9px 32px",
-              borderRadius: 12, border: "none",
-              fontSize: 13, outline: "none",
-              background: "rgba(255,255,255,0.95)",
-            }}
-          />
+        {/* Search + Barcode */}
+        <div style={{ position: "relative", display: "flex", gap: 8 }}>
+          <div style={{ position: "relative", flex: 1 }}>
+            <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 14 }}>🔍</span>
+            <input
+              placeholder="Search products..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px 9px 32px", borderRadius: 12, border: "none", fontSize: 13, outline: "none", background: "rgba(255,255,255,0.95)" }}
+            />
+          </div>
+          {/* Barcode button */}
+          <button
+            onClick={openScanner}
+            style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 12, padding: "9px 14px", fontSize: 18, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+            title="Scan barcode"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="1" y="4" width="3" height="16"/><rect x="6" y="4" width="1" height="16"/>
+              <rect x="9" y="4" width="2" height="16"/><rect x="13" y="4" width="1" height="16"/>
+              <rect x="16" y="4" width="3" height="16"/><rect x="21" y="4" width="2" height="16"/>
+              <line x1="1" y1="20" x2="4" y2="20"/><line x1="1" y1="4" x2="4" y2="4"/>
+              <line x1="20" y1="20" x2="23" y2="20"/><line x1="20" y1="4" x2="23" y2="4"/>
+            </svg>
+          </button>
         </div>
       </div>
 
       {/* Category chips */}
       {allCategories.length > 1 && (
-        <div style={{
-          display: "flex", gap: 8, overflowX: "auto", padding: "10px 16px",
-          scrollbarWidth: "none", background: "#fff",
-          borderBottom: "1px solid #fee2e2",
-        }}>
+        <div style={{ display: "flex", gap: 8, overflowX: "auto", padding: "10px 16px", scrollbarWidth: "none", background: "#fff", borderBottom: "1px solid #fee2e2" }}>
           {allCategories.map(cat => (
-            <button
-              key={cat}
-              onClick={() => setActiveCategory(cat)}
-              style={{
-                flexShrink: 0, padding: "5px 14px", borderRadius: 20,
-                border: activeCategory === cat ? "none" : "1.5px solid #fca5a5",
-                background: activeCategory === cat ? "linear-gradient(135deg,#ef4444,#b91c1c)" : "#fff",
-                color: activeCategory === cat ? "#fff" : "#dc2626",
-                fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
-              }}
-            >{cat}</button>
+            <button key={cat} onClick={() => setActiveCategory(cat)} style={{
+              flexShrink: 0, padding: "5px 14px", borderRadius: 20,
+              border: activeCategory === cat ? "none" : "1.5px solid #fca5a5",
+              background: activeCategory === cat ? "linear-gradient(135deg,#ef4444,#b91c1c)" : "#fff",
+              color: activeCategory === cat ? "#fff" : "#dc2626",
+              fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
+            }}>{cat}</button>
           ))}
         </div>
       )}
@@ -376,41 +386,90 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             {filtered.map(p => (
-              <ProductCard
-                key={p.id}
-                product={p}
-                staff={staff}
-                onImageClick={(idx) => openFullscreen(p, idx)}
-              />
+              <ProductCard key={p.id} product={p} staff={staff} cipherKey={cipherKey} onImageClick={(idx) => openFullscreen(p, idx)} />
             ))}
           </div>
         )}
       </div>
 
-      {/* Staff count */}
+      {/* Footer count */}
       {!loading && (
-        <div style={{
-          position: "fixed", bottom: 0, left: 0, right: 0,
-          background: "#fff", borderTop: "1px solid #fee2e2",
-          padding: "8px 16px", textAlign: "center",
-          fontSize: 11, color: "#9ca3af",
-        }}>
+        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #fee2e2", padding: "8px 16px", textAlign: "center", fontSize: 11, color: "#9ca3af" }}>
           {filtered.length} product{filtered.length !== 1 ? "s" : ""}
-          {activeCategory !== "All" ? ` in ${activeCategory}` : ""}
-          {isOffline ? " (cached)" : ""}
+        </div>
+      )}
+
+      {/* ── BARCODE SCANNER MODAL ── */}
+      {scannerOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 9999, display: "flex", flexDirection: "column" }}>
+          {/* Scanner header */}
+          <div style={{ background: "linear-gradient(135deg,#ef4444,#b91c1c)", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ color: "#fff", fontWeight: 700, fontSize: 15 }}>📷 Scan Barcode</div>
+            <button onClick={closeScanner} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", borderRadius: 8, width: 32, height: 32, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+          </div>
+
+          {/* Camera view */}
+          <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <video ref={videoRef} style={{ width: "100%", height: "100%", objectFit: "cover" }} playsInline muted />
+
+            {/* Scan overlay */}
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+              <div style={{ width: 260, height: 160, position: "relative" }}>
+                {/* Corner markers */}
+                {[["0,0","0,0"],["auto,0","0,0"],["0,auto","0,0"],["auto,auto","0,0"]].map((_, i) => (
+                  <div key={i} style={{
+                    position: "absolute",
+                    top: i < 2 ? 0 : "auto", bottom: i >= 2 ? 0 : "auto",
+                    left: i % 2 === 0 ? 0 : "auto", right: i % 2 === 1 ? 0 : "auto",
+                    width: 24, height: 24,
+                    borderTop: i < 2 ? "3px solid #ef4444" : "none",
+                    borderBottom: i >= 2 ? "3px solid #ef4444" : "none",
+                    borderLeft: i % 2 === 0 ? "3px solid #ef4444" : "none",
+                    borderRight: i % 2 === 1 ? "3px solid #ef4444" : "none",
+                  }} />
+                ))}
+                {/* Scan line animation */}
+                <div style={{
+                  position: "absolute", left: 0, right: 0, height: 2,
+                  background: "rgba(239,68,68,0.8)",
+                  animation: "scanLine 1.5s ease-in-out infinite",
+                  top: "50%",
+                }} />
+              </div>
+            </div>
+
+            {scannerLoading && (
+              <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ color: "#fff", fontSize: 14, marginBottom: 8 }}>⏳ Starting camera...</div>
+              </div>
+            )}
+
+            {scannerError && (
+              <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 }}>
+                <div style={{ color: "#f87171", fontSize: 14, textAlign: "center", marginBottom: 16 }}>{scannerError}</div>
+                <button onClick={closeScanner} style={{ background: "#ef4444", border: "none", color: "#fff", borderRadius: 10, padding: "10px 24px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Close</button>
+              </div>
+            )}
+          </div>
+
+          <div style={{ background: "#111", padding: "12px 16px", textAlign: "center", color: "rgba(255,255,255,0.6)", fontSize: 12 }}>
+            Point camera at barcode to scan automatically
+          </div>
+
+          <style>{`
+            @keyframes scanLine {
+              0% { top: 10%; }
+              50% { top: 90%; }
+              100% { top: 10%; }
+            }
+          `}</style>
         </div>
       )}
 
       {/* ── FULLSCREEN VIEWER ── */}
       {fsProduct && (
-        <div
-          className={fsClosing ? "fs-bg-out" : "fs-bg"}
-          style={{
-            position: "fixed", inset: 0,
-            background: "linear-gradient(160deg,#1a0000,#2d0000,#1a0000)",
-            zIndex: 9999, display: "flex", flexDirection: "column",
-            overflowY: "auto",
-          }}
+        <div className={fsClosing ? "fs-bg-out" : "fs-bg"}
+          style={{ position: "fixed", inset: 0, background: "linear-gradient(160deg,#1a0000,#2d0000,#1a0000)", zIndex: 9998, display: "flex", flexDirection: "column", overflowY: "auto" }}
           onClick={closeFullscreen}
         >
           <style>{`
@@ -421,113 +480,48 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
           `}</style>
 
           {/* Top bar */}
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{
-              position: "sticky", top: 0, zIndex: 10,
-              background: "linear-gradient(135deg,#ef4444,#b91c1c)",
-              padding: "12px 16px",
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-            }}
-          >
-            {/* Left: back + name */}
+          <div onClick={e => e.stopPropagation()} style={{ position: "sticky", top: 0, zIndex: 10, background: "linear-gradient(135deg,#ef4444,#b91c1c)", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
-              <button onClick={closeFullscreen} style={{
-                background: "rgba(255,255,255,0.2)", border: "none",
-                color: "#fff", borderRadius: 8, width: 32, height: 32,
-                fontSize: 18, cursor: "pointer", flexShrink: 0,
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>←</button>
-              <div style={{
-                color: "#fff", fontSize: 13, fontWeight: 700,
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-              }}>{fsProduct.name}</div>
+              <button onClick={closeFullscreen} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", borderRadius: 8, width: 32, height: 32, fontSize: 18, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>←</button>
+              <div style={{ color: "#fff", fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fsProduct.name}</div>
             </div>
-
-            {/* Right: counter + download */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginLeft: 8 }}>
-              {fsMedia.length > 1 && (
-                <span style={{ color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 600 }}>
-                  {fsIndex + 1}/{fsMedia.length}
-                </span>
-              )}
-              <button onClick={handleDownload} disabled={downloading} style={{
-                background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)",
-                color: "#fff", borderRadius: 10, padding: "6px 12px",
-                fontSize: 12, fontWeight: 700, cursor: "pointer",
-                display: "flex", alignItems: "center", gap: 4,
-              }}>
+              {fsMedia.length > 1 && <span style={{ color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 600 }}>{fsIndex + 1}/{fsMedia.length}</span>}
+              <button onClick={handleDownload} disabled={downloading} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
                 {downloading ? "⏳" : "⬇️"} {downloading ? "..." : "Save"}
               </button>
-              <button onClick={closeFullscreen} style={{
-                background: "rgba(255,255,255,0.15)", border: "none",
-                color: "#fff", borderRadius: 8, width: 32, height: 32,
-                fontSize: 18, cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>✕</button>
+              <button onClick={closeFullscreen} style={{ background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", borderRadius: 8, width: 32, height: 32, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
             </div>
           </div>
 
           {/* Media */}
           <div onClick={e => e.stopPropagation()} style={{ width: "100%", background: "#000" }}>
             {isVideo(fsSrc) ? (
-              <video src={fsSrc} controls autoPlay
-                style={{ width: "100%", maxHeight: "55vh", objectFit: "contain", display: "block" }}
-              />
+              <video src={fsSrc} controls autoPlay style={{ width: "100%", maxHeight: "55vh", objectFit: "contain", display: "block" }} />
             ) : (
-              <img src={fsSrc} alt={fsProduct.name}
-                style={{ width: "100%", maxHeight: "55vh", objectFit: "contain", display: "block", padding: 8, boxSizing: "border-box" }}
-              />
+              <img src={fsSrc} alt={fsProduct.name} style={{ width: "100%", maxHeight: "55vh", objectFit: "contain", display: "block", padding: 8, boxSizing: "border-box" }} />
             )}
           </div>
 
-          {/* Nav arrows + dots */}
+          {/* Nav */}
           {fsMedia.length > 1 && (
-            <div onClick={e => e.stopPropagation()} style={{
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 16, padding: "10px 0",
-            }}>
-              <button onClick={fsPrev} style={{
-                background: "rgba(239,68,68,0.85)", border: "none", color: "#fff",
-                borderRadius: "50%", width: 38, height: 38, fontSize: 20, cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>‹</button>
+            <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, padding: "10px 0" }}>
+              <button onClick={e => { e.stopPropagation(); setFsIndex(i => (i - 1 + fsMedia.length) % fsMedia.length); }} style={{ background: "rgba(239,68,68,0.85)", border: "none", color: "#fff", borderRadius: "50%", width: 38, height: 38, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
               <div style={{ display: "flex", gap: 6 }}>
                 {fsMedia.map((_, i) => (
-                  <div key={i} onClick={() => setFsIndex(i)} style={{
-                    width: i === fsIndex ? 18 : 7, height: 7, borderRadius: 4,
-                    background: i === fsIndex ? "#ef4444" : "rgba(255,255,255,0.4)",
-                    transition: "all 0.3s ease", cursor: "pointer",
-                  }} />
+                  <div key={i} onClick={() => setFsIndex(i)} style={{ width: i === fsIndex ? 18 : 7, height: 7, borderRadius: 4, background: i === fsIndex ? "#ef4444" : "rgba(255,255,255,0.4)", transition: "all 0.3s ease", cursor: "pointer" }} />
                 ))}
               </div>
-              <button onClick={fsNext} style={{
-                background: "rgba(239,68,68,0.85)", border: "none", color: "#fff",
-                borderRadius: "50%", width: 38, height: 38, fontSize: 20, cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>›</button>
+              <button onClick={e => { e.stopPropagation(); setFsIndex(i => (i + 1) % fsMedia.length); }} style={{ background: "rgba(239,68,68,0.85)", border: "none", color: "#fff", borderRadius: "50%", width: 38, height: 38, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
             </div>
           )}
 
-          {/* Description section - always visible */}
+          {/* Description */}
           {(fsProduct.short_description || fsProduct.long_description) && (
-            <div onClick={e => e.stopPropagation()} style={{
-              margin: "0 12px 12px", background: "rgba(255,255,255,0.08)",
-              borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)",
-              padding: "12px 14px",
-            }}>
+            <div onClick={e => e.stopPropagation()} style={{ margin: "0 12px 12px", background: "rgba(255,255,255,0.08)", borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", padding: "12px 14px" }}>
               <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 10, fontWeight: 700, letterSpacing: 0.8, marginBottom: 8 }}>📋 DESCRIPTION</div>
-              {fsProduct.short_description && (
-                <div style={{
-                  color: "#fff", fontSize: 13, fontWeight: 600,
-                  marginBottom: fsProduct.long_description ? 8 : 0, lineHeight: 1.5,
-                }}>{fsProduct.short_description}</div>
-              )}
-              {fsProduct.long_description && (
-                <div style={{
-                  color: "rgba(255,255,255,0.75)", fontSize: 12, lineHeight: 1.7,
-                  whiteSpace: "pre-wrap",
-                }}>{fsProduct.long_description}</div>
-              )}
+              {fsProduct.short_description && <div style={{ color: "#fff", fontSize: 13, fontWeight: 600, marginBottom: fsProduct.long_description ? 8 : 0, lineHeight: 1.5 }}>{fsProduct.short_description}</div>}
+              {fsProduct.long_description && <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 12, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{fsProduct.long_description}</div>}
             </div>
           )}
 
@@ -535,13 +529,7 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
         </div>
       )}
 
-      {/* Login Modal */}
-      {showLogin && (
-        <StaffLogin
-          onSuccess={onStaffChange}
-          onClose={onHideLogin}
-        />
-      )}
+      {showLogin && <StaffLogin onSuccess={onStaffChange} onClose={onHideLogin} />}
     </div>
   );
 }
