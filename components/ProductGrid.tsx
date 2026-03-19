@@ -106,11 +106,13 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
       loadCipherKey(supabase);
     });
 
+    // Only trust browser's navigator.onLine for the banner
     const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
-    if (!navigator.onLine) setIsOffline(true);
+    // Check actual connectivity
+    setIsOffline(!navigator.onLine);
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
@@ -137,13 +139,23 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
           .order("created_at", { ascending: false });
         if (!error && data) {
           setProducts(data);
+          setIsOffline(false);
           await saveProductsToDB(data);
-        } else throw new Error("fetch failed");
-      } else throw new Error("offline");
+        } else {
+          // Supabase error but we are online — try cache silently
+          const cached = await getProductsFromDB();
+          if (cached.length > 0) setProducts(cached);
+        }
+      } else {
+        // Actually offline — load from cache and show banner
+        const cached = await getProductsFromDB();
+        if (cached.length > 0) setProducts(cached);
+        setIsOffline(true);
+      }
     } catch {
       try {
         const cached = await getProductsFromDB();
-        if (cached.length > 0) { setProducts(cached); setIsOffline(true); }
+        if (cached.length > 0) setProducts(cached);
       } catch { setProducts([]); }
     }
     setLoading(false);
