@@ -131,32 +131,38 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
 
   async function loadProducts(supabase: any) {
     setLoading(true);
+
+    // Always try Supabase FIRST regardless of navigator.onLine
+    // navigator.onLine can be unreliable in PWA/TWA apps
     try {
-      if (navigator.onLine) {
-        const { data, error } = await supabase
-          .from("products")
-          .select("id,name,mrp,price,wholesale_price,purchase_price,category,image_url,video_url,keywords,created_at,short_description,long_description,vendors,barcode")
-          .order("created_at", { ascending: false });
-        if (!error && data) {
-          setProducts(data);
-          setIsOffline(false);
-          await saveProductsToDB(data);
-        } else {
-          // Supabase error but we are online — try cache silently
-          const cached = await getProductsFromDB();
-          if (cached.length > 0) setProducts(cached);
-        }
-      } else {
-        // Actually offline — load from cache and show banner
-        const cached = await getProductsFromDB();
-        if (cached.length > 0) setProducts(cached);
-        setIsOffline(true);
+      const { data, error } = await supabase
+        .from("products")
+        .select("id,name,mrp,price,wholesale_price,purchase_price,category,image_url,video_url,keywords,created_at,short_description,long_description,vendors,barcode")
+        .order("created_at", { ascending: false });
+
+      if (!error && data && data.length > 0) {
+        // Fresh data from Supabase — update UI and cache
+        setProducts(data);
+        setIsOffline(false);
+        await saveProductsToDB(data);
+        setLoading(false);
+        return;
       }
     } catch {
-      try {
-        const cached = await getProductsFromDB();
-        if (cached.length > 0) setProducts(cached);
-      } catch { setProducts([]); }
+      // Network failed — fall through to cache
+    }
+
+    // Supabase failed — load from IndexedDB cache
+    try {
+      const cached = await getProductsFromDB();
+      if (cached.length > 0) {
+        setProducts(cached);
+        setIsOffline(true);
+      } else {
+        setProducts([]);
+      }
+    } catch {
+      setProducts([]);
     }
     setLoading(false);
   }
@@ -333,11 +339,16 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
             <div style={{ color: "#fff", fontWeight: 800, fontSize: 16 }}>🏬 JG Wholesale</div>
             {staff && <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>👤 {staff.name}</div>}
           </div>
-          {staff ? (
-            <button onClick={onLogout} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Logout</button>
-          ) : (
-            <button onClick={onShowLogin} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>🔐 Staff Login</button>
-          )}
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => import("@/lib/supabase").then(({ supabase }) => loadProducts(supabase))}
+              style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 10px", fontSize: 16, cursor: "pointer" }}
+              title="Refresh products">🔄</button>
+            {staff ? (
+              <button onClick={onLogout} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Logout</button>
+            ) : (
+              <button onClick={onShowLogin} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>🔐 Staff Login</button>
+            )}
+          </div>
         </div>
 
         {/* Search + Barcode */}
