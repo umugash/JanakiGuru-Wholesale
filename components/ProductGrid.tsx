@@ -235,14 +235,16 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
 
   function handleBarcodeResult(barcode: string) {
     closeScanner();
-    // Search by barcode in products
-    const found = products.find(p => p.barcode === barcode || p.keywords?.includes(barcode));
+    // Search by barcode field exactly
+    const found = products.find(p => p.barcode && p.barcode.trim() === barcode.trim());
     if (found) {
+      // Direct match — show only this product
       setSearch(found.name);
       setActiveCategory("All");
     } else {
-      // Set search to barcode value so user can see result
+      // Not found — show barcode in search so user sees "no results" with barcode
       setSearch(barcode);
+      setActiveCategory("All");
     }
   }
 
@@ -318,11 +320,11 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
   const filtered = products.filter(p => {
     const cats = parseCategories(p.category);
     const matchCat = activeCategory === "All" || cats.includes(activeCategory);
-    const q = search.toLowerCase();
+    const q = search.toLowerCase().trim();
     const matchSearch = !q ||
       p.name?.toLowerCase().includes(q) ||
       (p.keywords || []).some((k: string) => k?.toLowerCase().includes(q)) ||
-      p.barcode === q;
+      (p.barcode && p.barcode.toLowerCase() === q);
     return matchCat && matchSearch;
   });
 
@@ -413,7 +415,8 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
         ) : filtered.length === 0 ? (
           <div style={{ textAlign: "center", padding: 60, color: "#9ca3af" }}>
             <div style={{ fontSize: 32, marginBottom: 12 }}>📭</div>
-            <div>No products found</div>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>No products found</div>
+            {search && <div style={{ fontSize: 12, color: "#b91c1c", marginTop: 4 }}>Searched: "{search}"</div>}
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
