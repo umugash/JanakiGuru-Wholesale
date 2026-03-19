@@ -1,41 +1,30 @@
-const CACHE_NAME = "jg-wholesale-v2";
+const CACHE_NAME = "jg-wholesale-v3";
 const STATIC_ASSETS = [
-  "/",
   "/manifest.json",
   "/icon-192.png",
   "/icon-512.png",
 ];
 
-// Install - cache static assets
+// Install - cache only static assets (NOT the page itself)
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS).catch(() => {
-        // Don't fail install if some assets not found
-      });
+      return cache.addAll(STATIC_ASSETS).catch(() => {});
     })
   );
   self.skipWaiting();
 });
 
-// Activate - clean old caches
+// Activate - clean ALL old caches
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((key) => key !== CACHE_NAME)
-          .map((key) => caches.delete(key))
-      )
+      Promise.all(keys.map((key) => caches.delete(key)))
     )
   );
   self.clients.claim();
 });
 
-// Fetch strategy:
-// - For navigation requests: network first, fall back to cached "/"
-// - For API/Supabase requests: network only (data handled via IndexedDB in app)
-// - For static assets: cache first, then network
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
@@ -43,34 +32,36 @@ self.addEventListener("fetch", (event) => {
   // Skip non-GET requests
   if (request.method !== "GET") return;
 
-  // Skip Supabase API calls - app handles these with IndexedDB
+  // Skip Supabase - handled by IndexedDB in app
   if (url.hostname.includes("supabase.co")) return;
 
-  // Navigation requests - network first, fall back to "/"
+  // Skip Vercel internals
+  if (url.pathname.startsWith("/_next/")) return;
+
+  // Navigation (page loads) - ALWAYS network first, no cache fallback for HTML
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-          return response;
-        })
-        .catch(() => caches.match("/"))
+      fetch(request).catch(() => caches.match("/") || new Response("Offline"))
     );
     return;
   }
 
-  // Static assets - cache first
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((response) => {
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-        }
-        return response;
-      }).catch(() => cached || new Response("Offline", { status: 503 }));
-    })
-  );
+  // Icons and manifest - cache first
+  if (url.pathname.match(/\.(png|ico|json)$/)) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
+        return fetch(request).then((response) => {
+          if (response.ok) {
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
+          }
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  // Everything else - network first
+  event.respondWith(fetch(request).catch(() => caches.match(request)));
 });
