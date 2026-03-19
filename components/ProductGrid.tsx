@@ -194,43 +194,85 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
   }
 
   async function startZxingScanner() {
+    // Try ZXing first
     try {
-      // Dynamically load ZXing
-      const ZXing = await import("@zxing/library" as any).catch(() => null);
-      if (!ZXing || !videoRef.current) return;
+      const ZXingModule = await import("@zxing/library").catch(() => null);
+      if (ZXingModule && videoRef.current) {
+        const codeReader = new (ZXingModule as any).BrowserMultiFormatReader();
+        scannerRef.current = codeReader;
+        await codeReader.decodeFromVideoElement(videoRef.current, (result: any, err: any) => {
+          if (result) {
+            handleBarcodeResult(result.getText());
+          }
+        });
+        return;
+      }
+    } catch {}
 
-      const codeReader = new ZXing.BrowserMultiFormatReader();
-      scannerRef.current = codeReader;
-
-      codeReader.decodeFromVideoElement(videoRef.current, (result: any, err: any) => {
-        if (result) {
-          const barcodeText = result.getText();
-          handleBarcodeResult(barcodeText);
-        }
-      });
-    } catch {
-      // Fallback: use BarcodeDetector API if available
-      startNativeBarcodeDetector();
-    }
+    // Fallback to native BarcodeDetector
+    startNativeBarcodeDetector();
   }
 
   function startNativeBarcodeDetector() {
     if (!("BarcodeDetector" in window)) {
-      setScannerError("Barcode scanner not supported on this device. Try searching manually.");
+      // Last resort: use canvas-based polling with ZXing
+      startCanvasScanner();
       return;
     }
-    const detector = new (window as any).BarcodeDetector({ formats: ["ean_13", "ean_8", "qr_code", "code_128", "code_39", "upc_a", "upc_e"] });
-    const scanInterval = setInterval(async () => {
-      if (!videoRef.current || !scannerOpen) { clearInterval(scanInterval); return; }
+    const detector = new (window as any).BarcodeDetector({
+      formats: ["ean_13", "ean_8", "qr_code", "code_128", "code_39", "upc_a", "upc_e", "itf", "codabar"]
+    });
+    let scanning = true;
+    const scan = async () => {
+      if (!scanning || !videoRef.current) return;
       try {
         const barcodes = await detector.detect(videoRef.current);
         if (barcodes.length > 0) {
-          clearInterval(scanInterval);
+          scanning = false;
           handleBarcodeResult(barcodes[0].rawValue);
+          return;
         }
       } catch {}
-    }, 300);
-    scannerRef.current = { stop: () => clearInterval(scanInterval) };
+      if (scanning) requestAnimationFrame(scan);
+    };
+    requestAnimationFrame(scan);
+    scannerRef.current = { stop: () => { scanning = false; } };
+  }
+
+  function startCanvasScanner() {
+    // Canvas-based fallback using ZXing
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    let scanning = true;
+
+    const scan = async () => {
+      if (!scanning || !videoRef.current || !ctx) return;
+      if (videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
+        canvas.width = videoRef.current.videoWidth;
+        canvas.height = videoRef.current.videoHeight;
+        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+        try {
+          const ZXingModule = await import("@zxing/library").catch(() => null);
+          if (ZXingModule) {
+            const reader = new (ZXingModule as any).BrowserMultiFormatReader();
+            const imageData = canvas.toDataURL("image/png");
+            const img = new Image();
+            img.onload = async () => {
+              try {
+                const result = await reader.decodeFromImageElement(img);
+                if (result) { scanning = false; handleBarcodeResult(result.getText()); return; }
+              } catch {}
+              if (scanning) setTimeout(scan, 500);
+            };
+            img.src = imageData;
+            return;
+          }
+        } catch {}
+      }
+      if (scanning) setTimeout(scan, 500);
+    };
+    scan();
+    scannerRef.current = { stop: () => { scanning = false; } };
   }
 
   function handleBarcodeResult(barcode: string) {
