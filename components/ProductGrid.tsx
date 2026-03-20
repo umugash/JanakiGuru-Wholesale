@@ -420,6 +420,40 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
             <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
             <div>Loading products...</div>
           </div>
+        ) : isOffline && products.length === 0 ? (
+          /* No internet AND no cached data */
+          <div style={{
+            display: "flex", flexDirection: "column", alignItems: "center",
+            padding: "48px 24px", textAlign: "center",
+          }}>
+            <div style={{ fontSize: 64, marginBottom: 8 }}>📴</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#b91c1c", marginBottom: 8 }}>You are Offline</div>
+            <div style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.6, marginBottom: 24, maxWidth: 260 }}>
+              No internet connection and no cached data available.
+            </div>
+            <div style={{ background: "#fff", border: "2px solid #fee2e2", borderRadius: 16, padding: "16px 20px", marginBottom: 20, width: "100%", maxWidth: 300 }}>
+              <div style={{ fontSize: 11, color: "#9ca3af", fontWeight: 700, marginBottom: 10, letterSpacing: 0.5 }}>WHAT TO DO</div>
+              {[
+                ["📱", "Turn on Mobile Data or Wi-Fi"],
+                ["✈️", "Make sure Airplane Mode is off"],
+                ["🔄", "Pull down to refresh after connecting"],
+              ].map(([icon, text], i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, textAlign: "left" }}>
+                  <span style={{ fontSize: 18, flexShrink: 0 }}>{icon}</span>
+                  <span style={{ fontSize: 12, color: "#374151" }}>{text}</span>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => import("@/lib/supabase").then(({ supabase }) => loadProducts(supabase))}
+              style={{
+                background: "linear-gradient(135deg,#ef4444,#b91c1c)", color: "#fff",
+                border: "none", borderRadius: 12, padding: "12px 32px",
+                fontSize: 14, fontWeight: 700, cursor: "pointer",
+                boxShadow: "0 4px 16px rgba(220,38,38,0.3)",
+              }}
+            >🔄 Try Again</button>
+          </div>
         ) : filtered.length === 0 ? (
           <div style={{ textAlign: "center", padding: 60, color: "#9ca3af" }}>
             <div style={{ fontSize: 32, marginBottom: 12 }}>📭</div>
