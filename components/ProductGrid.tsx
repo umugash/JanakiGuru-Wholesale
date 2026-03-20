@@ -363,16 +363,11 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
             <div style={{ color: "#fff", fontWeight: 800, fontSize: 16 }}>🏬 JG Wholesale</div>
             {staff && <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>👤 {staff.name}</div>}
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={() => import("@/lib/supabase").then(({ supabase }) => loadProducts(supabase))}
-              style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 10px", fontSize: 16, cursor: "pointer" }}
-              title="Refresh products">🔄</button>
-            {staff ? (
-              <button onClick={onLogout} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Logout</button>
-            ) : (
-              <button onClick={onShowLogin} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>🔐 Staff Login</button>
-            )}
-          </div>
+          {staff ? (
+            <button onClick={onLogout} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Logout</button>
+          ) : (
+            <button onClick={onShowLogin} style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>🔐 Staff Login</button>
+          )}
         </div>
 
         {/* Search + Barcode */}
