@@ -129,7 +129,7 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
       {/* Card Body */}
       <div style={{ padding: "8px 10px 10px", display: "flex", flexDirection: "column", flex: 1 }}>
         <div style={{
-          fontSize: 12, fontWeight: 600, color: "#1a1a1a", lineHeight: 1.3,
+          fontSize: 13, fontWeight: 700, color: "#1a1a1a", lineHeight: 1.3,
           marginBottom: 6, display: "-webkit-box", WebkitLineClamp: 2,
           WebkitBoxOrient: "vertical", overflow: "hidden",
         }}>{product.name}</div>

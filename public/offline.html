@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JG Wholesale — Offline</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      background: linear-gradient(160deg, #fff9f9, #fff);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: system-ui, sans-serif;
+      padding: 32px 24px;
+      text-align: center;
+    }
+    .icon { font-size: 72px; margin-bottom: 8px; animation: pulse 2s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+    .wifi { font-size: 56px; margin-bottom: 4px; opacity: 0.3; }
+    h1 { font-size: 24px; font-weight: 800; color: #b91c1c; margin-bottom: 10px; }
+    p { font-size: 14px; color: #6b7280; line-height: 1.6; margin-bottom: 28px; max-width: 280px; }
+    .card {
+      background: #fff;
+      border: 2px solid #fee2e2;
+      border-radius: 18px;
+      padding: 20px 24px;
+      margin-bottom: 24px;
+      width: 100%;
+      max-width: 320px;
+      box-shadow: 0 4px 20px rgba(220,38,38,0.08);
+    }
+    .card-title { font-size: 13px; color: #9ca3af; font-weight: 600; margin-bottom: 12px; letter-spacing: 0.5px; }
+    .tip { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; text-align: left; }
+    .tip-icon { font-size: 20px; flex-shrink: 0; }
+    .tip-text { font-size: 13px; color: #374151; line-height: 1.4; }
+    .reload-btn {
+      background: linear-gradient(135deg, #ef4444, #b91c1c);
+      color: #fff;
+      border: none;
+      border-radius: 14px;
+      padding: 14px 40px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(220,38,38,0.3);
+      width: 100%;
+      max-width: 320px;
+      font-family: system-ui, sans-serif;
+    }
+    .logo { font-size: 18px; font-weight: 800; color: #b91c1c; margin-bottom: 4px; }
+    .sub { font-size: 11px; color: #9ca3af; margin-bottom: 28px; }
+    .cached-note { font-size: 12px; color: #f59e0b; font-weight: 600; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="logo">🏬 JG Wholesale</div>
+  <div class="sub">Janaki Guru Enterprises</div>
+
+  <div class="wifi">📶</div>
+  <div class="icon">📴</div>
+
+  <h1>You are Offline</h1>
+  <p>No internet connection detected. Please connect to the internet to load the latest prices.</p>
+
+  <div class="card">
+    <div class="card-title">WHAT YOU CAN DO</div>
+    <div class="tip">
+      <span class="tip-icon">📱</span>
+      <span class="tip-text">Turn on Mobile Data or connect to Wi-Fi</span>
+    </div>
+    <div class="tip">
+      <span class="tip-icon">✈️</span>
+      <span class="tip-text">Make sure Airplane Mode is turned off</span>
+    </div>
+    <div class="tip">
+      <span class="tip-icon">🔄</span>
+      <span class="tip-text">Tap Reload after connecting to internet</span>
+    </div>
+  </div>
+
+  <button class="reload-btn" onclick="window.location.reload()">🔄 Reload</button>
+
+  <div class="cached-note" id="cached-note" style="display:none">
+    💾 Cached data may be available — try reloading
+  </div>
+
+  <script>
+    // Check if IndexedDB has cached products
+    try {
+      const req = indexedDB.open('jg_wholesale_cache', 1);
+      req.onsuccess = function(e) {
+        const db = e.target.result;
+        if (db.objectStoreNames.contains('products')) {
+          const tx = db.transaction('products', 'readonly');
+          const count = tx.objectStore('products').count();
+          count.onsuccess = function() {
+            if (count.result > 0) {
+              document.getElementById('cached-note').style.display = 'block';
+            }
+          };
+        }
+      };
+    } catch(e) {}
+
+    // Auto-reload when connection comes back
+    window.addEventListener('online', function() {
+      window.location.reload();
+    });
+  </script>
+</body>
+</html>
