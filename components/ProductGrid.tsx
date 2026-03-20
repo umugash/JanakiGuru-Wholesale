@@ -84,7 +84,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
   const [activeCategory, setActiveCategory] = useState("All");
   const [loading, setLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
-  const [debugMsg, setDebugMsg] = useState("");
   const [cipherKey, setCipherKey] = useState("ROYALTIMES");
 
   // Fullscreen
@@ -143,7 +142,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
       if (error) {
         // Show exact Supabase error so we can debug
         setIsOffline(true);
-        setDebugMsg("Supabase error: " + error.message + " | code: " + error.code);
         const cached = await getProductsFromDB().catch(() => []);
         if (cached.length > 0) setProducts(cached);
         setLoading(false);
@@ -153,13 +151,12 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
       if (data && data.length >= 0) {
         setProducts(data);
         setIsOffline(false);
-        setDebugMsg("");
         await saveProductsToDB(data);
         setLoading(false);
         return;
       }
-    } catch (err: any) {
-      setDebugMsg("Fetch exception: " + (err?.message || String(err)));
+    } catch {
+      // Network failed — fall through to cache
     }
 
     // Fall back to cache
@@ -350,11 +347,7 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
           📴 Offline — showing cached data
         </div>
       )}
-      {debugMsg && (
-        <div style={{ background: "#fef2f2", borderBottom: "1px solid #fca5a5", padding: "6px 16px", fontSize: 11, color: "#dc2626", wordBreak: "break-all" }}>
-          🔴 {debugMsg}
-        </div>
-      )}
+
 
       {/* Header */}
       <div style={{ position: "sticky", top: 0, zIndex: 100, background: "linear-gradient(135deg,#ef4444,#b91c1c)", padding: "12px 16px 10px", boxShadow: "0 2px 12px rgba(185,28,28,0.25)" }}>
