@@ -155,8 +155,8 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
         setLoading(false);
         return;
       }
-    } catch (err: any) {
-      setDebugMsg("Fetch exception: " + (err?.message || String(err)));
+    } catch {
+      // Network failed — fall through to cache
     }
 
     // Fall back to cache
