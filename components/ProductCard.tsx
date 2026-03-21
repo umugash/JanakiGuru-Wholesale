@@ -159,6 +159,27 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
               )
             )}
 
+            {/* Variants — show as encoded price pills e.g. L/AM */}
+            {(product as any).variants_text && (
+              <div style={{ marginTop: 2 }}>
+                <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, marginBottom: 2, letterSpacing: 0.5 }}>VARIANTS</div>
+                <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+                  {String((product as any).variants_text).split(",").map((v: string, i: number) => {
+                    const parts = v.trim().split(":");
+                    if (parts.length < 2) return null;
+                    const price = Number(parts[parts.length - 1].trim());
+                    const label = parts.slice(0, -1).join(":").trim();
+                    if (!label || isNaN(price)) return null;
+                    return (
+                      <span key={i} style={{ ...pricePill("#0369a1"), fontSize: 10, padding: "2px 7px" }}>
+                        {label}: {encodePrice(price, cipherKey)}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Purchase — encoded, only if staff has permission */}
             {encodedPurchase && staff?.show_purchase_price !== false && (
               <span style={pricePill("#16a34a")}>
@@ -167,7 +188,7 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
             )}
 
             {/* Vendors — encoded */}
-            {vendors.length > 0 && (
+            {vendors.length > 0 && staff?.show_purchase_price !== false && (
               <div style={{ marginTop: 2, borderTop: "1px dashed #e5e7eb", paddingTop: 4 }}>
                 <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, marginBottom: 3, letterSpacing: 0.5 }}>VENDORS</div>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
