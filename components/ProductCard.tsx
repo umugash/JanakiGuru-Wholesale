@@ -159,8 +159,8 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
               )
             )}
 
-            {/* Purchase — encoded */}
-            {encodedPurchase && (
+            {/* Purchase — encoded, only if staff has permission */}
+            {encodedPurchase && staff?.show_purchase_price !== false && (
               <span style={pricePill("#16a34a")}>
                 Purchase {encodedPurchase}
               </span>

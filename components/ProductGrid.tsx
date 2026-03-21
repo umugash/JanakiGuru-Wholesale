@@ -155,8 +155,8 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
         setLoading(false);
         return;
       }
-    } catch {
-      // Network failed — fall through to cache
+    } catch (err: any) {
+      setDebugMsg("Fetch exception: " + (err?.message || String(err)));
     }
 
     // Fall back to cache
@@ -245,8 +245,13 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
 
   function handleBarcodeResult(barcode: string) {
     closeScanner();
-    // Search by barcode field exactly
-    const found = products.find(p => p.barcode && p.barcode.trim() === barcode.trim());
+    const trimmed = barcode.trim();
+    // Search by barcode field - check both single barcode and barcodes array
+    const found = products.find(p => {
+      if (p.barcode && p.barcode.trim() === trimmed) return true;
+      if (Array.isArray((p as any).barcodes) && (p as any).barcodes.some((b: string) => b.trim() === trimmed)) return true;
+      return false;
+    });
     if (found) {
       // Direct match — show only this product
       setSearch(found.name);
@@ -331,10 +336,16 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
     const cats = parseCategories(p.category);
     const matchCat = activeCategory === "All" || cats.includes(activeCategory);
     const q = search.toLowerCase().trim();
-    const matchSearch = !q ||
-      p.name?.toLowerCase().includes(q) ||
-      (p.keywords || []).some((k: string) => k?.toLowerCase().includes(q)) ||
-      (p.barcode && p.barcode.toLowerCase() === q);
+    if (!q) return matchCat;
+    // Middle word search - split query into words and check all match
+    const words = q.split(/\s+/).filter(Boolean);
+    const searchText = [
+      p.name || "",
+      ...(p.keywords || []),
+      p.barcode || "",
+      ...(Array.isArray((p as any).barcodes) ? (p as any).barcodes : []),
+    ].join(" ").toLowerCase();
+    const matchSearch = words.every(word => searchText.includes(word));
     return matchCat && matchSearch;
   });
 
