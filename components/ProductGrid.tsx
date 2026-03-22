@@ -136,7 +136,7 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
     try {
       const { data, error } = await supabase
         .from("products")
-        .select("id,name,mrp,price,wholesale_price,purchase_price,category,image_url,video_url,keywords,created_at,short_description,long_description,vendors,barcode")
+        .select("id,name,mrp,price,price_text,wholesale_price,purchase_price,category,image_url,video_url,keywords,created_at,short_description,long_description,vendors,barcode,variants_text")
         .order("created_at", { ascending: false });
 
       if (error) {
