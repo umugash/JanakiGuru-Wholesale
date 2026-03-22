@@ -47,16 +47,30 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
 
   const src = media[current] || "";
 
-  // Encoded prices
   const encodedWS = encodeWholesalePrices(product.wholesale_price, cipherKey);
   const encodedPurchase = product.purchase_price
     ? encodePrice(product.purchase_price, cipherKey)
     : null;
 
-  // Multiple W/S prices
   const wsPrices = parseWholesalePrices(product.wholesale_price);
   const hasMultipleWS = wsPrices.length > 1;
   const wsLabels = ["Single", "Bundle", "Pack", "Bulk", "Special"];
+
+  // ── Parse variants for combined display e.g. "45/420" ──
+  const variantItems: { label: string; price: number }[] = (() => {
+    const vt = (product as any).variants_text;
+    if (!vt) return [];
+    return String(vt).split(",").map((v: string) => {
+      const parts = v.trim().split(":");
+      if (parts.length < 2) return null;
+      const price = Number(parts[parts.length - 1].trim());
+      const label = parts.slice(0, -1).join(":").trim();
+      if (!label || isNaN(price)) return null;
+      return { label, price };
+    }).filter(Boolean) as { label: string; price: number }[];
+  })();
+
+  const hasVariants = variantItems.length > 0;
 
   return (
     <div style={{
@@ -136,18 +150,18 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
 
         {staff ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {/* MRP + Retail as plain pills */}
+            {/* MRP + Retail */}
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
               <span style={pricePill("#6b7280")}>MRP ₹{product.mrp}</span>
               <span style={pricePill("#2563eb")}>Retail ₹{product.price}</span>
             </div>
 
-            {/* W/S — encoded, single or multiple */}
+            {/* W/S — encoded */}
             {hasMultipleWS ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                 {wsPrices.map((p, i) => (
                   <span key={i} style={{ ...pricePill("#dc2626"), fontSize: i === 0 ? 12 : 11, padding: i === 0 ? "4px 10px" : "3px 8px" }}>
-                    {wsLabels[i] || `Option${i+1}`}: {encodePrice(p, cipherKey)}
+                    {wsLabels[i] || `Option${i + 1}`}: {encodePrice(p, cipherKey)}
                   </span>
                 ))}
               </div>
@@ -159,23 +173,21 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
               )
             )}
 
-            {/* Variants — show as encoded price pills e.g. L/AM */}
-            {(product as any).variants_text && (
+            {/* ── VARIANTS: show combined "45/420" pill + individual breakdown ── */}
+            {hasVariants && (
               <div style={{ marginTop: 2 }}>
-                <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, marginBottom: 2, letterSpacing: 0.5 }}>VARIANTS</div>
-                <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
-                  {String((product as any).variants_text).split(",").map((v: string, i: number) => {
-                    const parts = v.trim().split(":");
-                    if (parts.length < 2) return null;
-                    const price = Number(parts[parts.length - 1].trim());
-                    const label = parts.slice(0, -1).join(":").trim();
-                    if (!label || isNaN(price)) return null;
-                    return (
-                      <span key={i} style={{ ...pricePill("#0369a1"), fontSize: 10, padding: "2px 7px" }}>
-                        {label}: {encodePrice(price, cipherKey)}
-                      </span>
-                    );
-                  })}
+                <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, marginBottom: 3, letterSpacing: 0.5 }}>VARIANTS</div>
+                <div style={{ display: "flex", gap: 3, flexWrap: "wrap", alignItems: "center" }}>
+                  {/* Combined summary pill: encoded prices joined with / */}
+                  <span style={{ ...pricePill("#0369a1"), fontSize: 12, padding: "4px 10px", fontWeight: 800 }}>
+                    {variantItems.map(v => encodePrice(v.price, cipherKey)).join("/")}
+                  </span>
+                  {/* Individual breakdown pills */}
+                  {variantItems.map((v, i) => (
+                    <span key={i} style={{ ...pricePill("#0ea5e9"), fontSize: 9, padding: "2px 6px", opacity: 0.9 }}>
+                      {v.label}: {encodePrice(v.price, cipherKey)}
+                    </span>
+                  ))}
                 </div>
               </div>
             )}
@@ -202,7 +214,7 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
             )}
           </div>
         ) : (
-          // Guest: plain prices
+          // Guest view: plain prices
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={pricePill("#6b7280")}>MRP ₹{product.mrp}</span>
             {hasMultipleWS ? (
@@ -217,6 +229,22 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
               <span style={{ ...pricePill("#dc2626"), fontSize: 13, fontWeight: 800, padding: "4px 10px" }}>
                 W/S ₹{product.wholesale_price}
               </span>
+            )}
+            {/* Guest variant view: plain prices */}
+            {hasVariants && (
+              <div style={{ marginTop: 2 }}>
+                <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, marginBottom: 3, letterSpacing: 0.5 }}>VARIANTS</div>
+                <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+                  <span style={{ ...pricePill("#0369a1"), fontSize: 12, padding: "4px 10px", fontWeight: 800 }}>
+                    {variantItems.map(v => `₹${v.price}`).join("/")}
+                  </span>
+                  {variantItems.map((v, i) => (
+                    <span key={i} style={{ ...pricePill("#0ea5e9"), fontSize: 9, padding: "2px 6px" }}>
+                      {v.label}: ₹{v.price}
+                    </span>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         )}
