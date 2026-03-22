@@ -22,13 +22,11 @@ function pricePill(bg: string): React.CSSProperties {
   };
 }
 
-// Parse slash prices from price_text or price field
-// "45/420" → [45, 420], "45" → [45], 45 → [45]
+// Parse slash prices from price_text or price field: "45/420" → [45,420]
 function parseStorePrices(product: any): number[] {
   const raw = product.price_text || product.price;
   if (!raw && raw !== 0) return [];
-  const str = String(raw).trim();
-  return str.split("/").map((s: string) => Number(s.trim())).filter((n: number) => !isNaN(n) && n > 0);
+  return String(raw).trim().split("/").map((s: string) => Number(s.trim())).filter((n: number) => !isNaN(n) && n > 0);
 }
 
 export default function ProductCard({ product, staff, cipherKey, onImageClick }: Props) {
@@ -51,29 +49,9 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
   const hasMultipleWS = wsPrices.length > 1;
   const wsLabels = ["Single", "Bundle", "Pack", "Bulk", "Special"];
 
-  // ── Store prices from price_text (supports slash) ──
+  // Retail price display — supports slash format "45/420"
   const storePrices = parseStorePrices(product);
-  const hasMultipleStorePrices = storePrices.length > 1;
-  // Display as "45/420" in Retail pill
-  const retailPriceDisplay = storePrices.length > 0
-    ? storePrices.join("/")
-    : String(product.price || "");
-
-  // ── Parse variants_text for VARIANTS section ──
-  const variantItems: { label: string; price: number }[] = (() => {
-    const vt = product.variants_text;
-    if (!vt) return [];
-    return String(vt).split(",").map((v: string) => {
-      const parts = v.trim().split(":");
-      if (parts.length < 2) return null;
-      const price = Number(parts[parts.length - 1].trim());
-      const label = parts.slice(0, -1).join(":").trim();
-      if (!label || isNaN(price)) return null;
-      return { label, price };
-    }).filter(Boolean) as { label: string; price: number }[];
-  })();
-
-  const hasVariants = variantItems.length > 0;
+  const retailPriceDisplay = storePrices.length > 0 ? storePrices.join("/") : String(product.price || "");
 
   return (
     <div style={{ background: "#fff", borderRadius: 14, overflow: "hidden", boxShadow: "0 2px 10px rgba(220,38,38,0.07)", border: "1.5px solid #fee2e2", display: "flex", flexDirection: "column", position: "relative" }}>
@@ -88,6 +66,7 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
             : isVideo(src) ? <video src={src} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             : <img src={src} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "contain", padding: 6 }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
         </div>
+
         {media.length > 1 && (
           <>
             <div style={{ position: "absolute", bottom: 6, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 4, zIndex: 10 }}>
@@ -97,6 +76,7 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
             <button onClick={nextMedia} style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,0.9)", border: "1.5px solid #fca5a5", borderRadius: "50%", width: 26, height: 26, fontSize: 15, color: "#dc2626", fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 }}>›</button>
           </>
         )}
+
         {isVideo(src) && <div style={{ position: "absolute", bottom: 6, left: 6, background: "rgba(220,38,38,0.85)", color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 10, padding: "2px 6px", zIndex: 10 }}>▶ VIDEO</div>}
       </div>
 
@@ -107,7 +87,7 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
         {staff ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
 
-            {/* MRP + Retail (supports slash format e.g. 45/420) */}
+            {/* MRP + Retail (slash format supported: 45/420) */}
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
               <span style={pricePill("#6b7280")}>MRP ₹{product.mrp}</span>
               <span style={pricePill("#2563eb")}>Retail ₹{retailPriceDisplay}</span>
@@ -126,46 +106,19 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
               <span style={{ ...pricePill("#dc2626"), fontSize: 13, fontWeight: 800, padding: "4px 10px" }}>W/S {encodedWS}</span>
             ) : null}
 
-            {/* VARIANTS — combined pill + individual breakdown */}
-            {hasVariants && (
-              <div style={{ marginTop: 2 }}>
-                <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, marginBottom: 3, letterSpacing: 0.5 }}>VARIANTS</div>
-                <div style={{ display: "flex", gap: 3, flexWrap: "wrap", alignItems: "center" }}>
-                  <span style={{ ...pricePill("#0369a1"), fontSize: 12, padding: "4px 10px", fontWeight: 800 }}>
-                    {variantItems.map(v => encodePrice(v.price, cipherKey)).join("/")}
-                  </span>
-                  {variantItems.map((v, i) => (
-                    <span key={i} style={{ ...pricePill("#0ea5e9"), fontSize: 9, padding: "2px 6px", opacity: 0.9 }}>
-                      {v.label}: {encodePrice(v.price, cipherKey)}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* If no variants_text but store price has slash — show as variants too */}
-            {!hasVariants && hasMultipleStorePrices && (
-              <div style={{ marginTop: 2 }}>
-                <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, marginBottom: 3, letterSpacing: 0.5 }}>STORE VARIANTS</div>
-                <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
-                  <span style={{ ...pricePill("#0369a1"), fontSize: 12, padding: "4px 10px", fontWeight: 800 }}>
-                    {storePrices.map(p => encodePrice(p, cipherKey)).join("/")}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* Purchase — encoded */}
+            {/* Purchase — encoded, only if permitted */}
             {encodedPurchase && staff?.show_purchase_price !== false && (
               <span style={pricePill("#16a34a")}>Purchase {encodedPurchase}</span>
             )}
 
-            {/* Vendors — encoded */}
+            {/* Vendors — encoded, only if permitted */}
             {vendors.length > 0 && staff?.show_purchase_price !== false && (
               <div style={{ marginTop: 2, borderTop: "1px dashed #e5e7eb", paddingTop: 4 }}>
                 <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, marginBottom: 3, letterSpacing: 0.5 }}>VENDORS</div>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                  {vendors.map((v, i) => <span key={i} style={pricePill("#7c3aed")}>{v.name.split(" ")[0]} {encodePrice(v.price, cipherKey)}</span>)}
+                  {vendors.map((v, i) => (
+                    <span key={i} style={pricePill("#7c3aed")}>{v.name.split(" ")[0]} {encodePrice(v.price, cipherKey)}</span>
+                  ))}
                 </div>
               </div>
             )}
