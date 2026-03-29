@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { encodePrice, encodeWholesalePrices, parseWholesalePrices } from "@/lib/cipher";
+import { encodePrice, parseWholesalePrices } from "@/lib/cipher";
 
 function isVideo(url: string) {
   return !!(url?.match(/\.(mp4|webm|ogg|mov)$/i) || url?.includes("video"));
@@ -22,11 +22,16 @@ function pricePill(bg: string): React.CSSProperties {
   };
 }
 
-// Parse slash prices from price_text or price field: "45/420" → [45,420]
 function parseStorePrices(product: any): number[] {
   const raw = product.price_text || product.price;
   if (!raw && raw !== 0) return [];
   return String(raw).trim().split("/").map((s: string) => Number(s.trim())).filter((n: number) => !isNaN(n) && n > 0);
+}
+
+// Parse wholesale_labels: "1 pc, 1 pkt, 1 box, 1 carton" → ["1 pc","1 pkt","1 box","1 carton"]
+function parseWsLabels(val: any): string[] {
+  if (!val) return [];
+  return String(val).split(",").map((s: string) => s.trim()).filter(Boolean);
 }
 
 export default function ProductCard({ product, staff, cipherKey, onImageClick }: Props) {
@@ -42,14 +47,16 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
 
   const src = media[current] || "";
 
-  const encodedWS = encodeWholesalePrices(product.wholesale_price, cipherKey);
   const encodedPurchase = product.purchase_price ? encodePrice(product.purchase_price, cipherKey) : null;
 
+  // Wholesale prices + labels
   const wsPrices = parseWholesalePrices(product.wholesale_price);
-  const hasMultipleWS = wsPrices.length > 1;
-  const wsLabels = ["Single", "Bundle", "Pack", "Bulk", "Special"];
+  const wsLabels = parseWsLabels(product.wholesale_labels);
+  // Fallback label if admin didn't set one
+  const fallbackLabels = ["Single", "Bundle", "Pack", "Bulk", "Carton", "Special"];
+  const getWsLabel = (i: number) => wsLabels[i] || fallbackLabels[i] || `Tier ${i + 1}`;
 
-  // Retail price display — supports slash format "45/420"
+  // Retail price display (slash format)
   const storePrices = parseStorePrices(product);
   const retailPriceDisplay = storePrices.length > 0 ? storePrices.join("/") : String(product.price || "");
 
@@ -66,7 +73,6 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
             : isVideo(src) ? <video src={src} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             : <img src={src} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "contain", padding: 6 }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
         </div>
-
         {media.length > 1 && (
           <>
             <div style={{ position: "absolute", bottom: 6, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 4, zIndex: 10 }}>
@@ -76,7 +82,6 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
             <button onClick={nextMedia} style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,0.9)", border: "1.5px solid #fca5a5", borderRadius: "50%", width: 26, height: 26, fontSize: 15, color: "#dc2626", fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 }}>›</button>
           </>
         )}
-
         {isVideo(src) && <div style={{ position: "absolute", bottom: 6, left: 6, background: "rgba(220,38,38,0.85)", color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 10, padding: "2px 6px", zIndex: 10 }}>▶ VIDEO</div>}
       </div>
 
@@ -87,31 +92,39 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
         {staff ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
 
-            {/* MRP + Retail (slash format supported: 45/420) */}
+            {/* MRP + Retail */}
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
               <span style={pricePill("#6b7280")}>MRP ₹{product.mrp}</span>
               <span style={pricePill("#2563eb")}>Retail ₹{retailPriceDisplay}</span>
             </div>
 
-            {/* W/S — encoded */}
-            {hasMultipleWS ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                {wsPrices.map((p, i) => (
-                  <span key={i} style={{ ...pricePill("#dc2626"), fontSize: i === 0 ? 12 : 11, padding: i === 0 ? "4px 10px" : "3px 8px" }}>
-                    {wsLabels[i] || `Option${i + 1}`}: {encodePrice(p, cipherKey)}
-                  </span>
-                ))}
-              </div>
-            ) : encodedWS ? (
-              <span style={{ ...pricePill("#dc2626"), fontSize: 13, fontWeight: 800, padding: "4px 10px" }}>W/S {encodedWS}</span>
-            ) : null}
+            {/* ── WHOLESALE — custom labels per tier ── */}
+            {wsPrices.length > 0 && (
+              wsPrices.length === 1 ? (
+                <span style={{ ...pricePill("#dc2626"), fontSize: 13, fontWeight: 800, padding: "4px 10px" }}>
+                  W/S {encodePrice(wsPrices[0], cipherKey)}
+                </span>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                  {wsPrices.map((p, i) => (
+                    <span key={i} style={{
+                      ...pricePill("#dc2626"),
+                      fontSize: i === 0 ? 12 : 11,
+                      padding: i === 0 ? "4px 10px" : "3px 8px",
+                    }}>
+                      {getWsLabel(i)}: {encodePrice(p, cipherKey)}
+                    </span>
+                  ))}
+                </div>
+              )
+            )}
 
-            {/* Purchase — encoded, only if permitted */}
+            {/* Purchase — encoded */}
             {encodedPurchase && staff?.show_purchase_price !== false && (
               <span style={pricePill("#16a34a")}>Purchase {encodedPurchase}</span>
             )}
 
-            {/* Vendors — encoded, only if permitted */}
+            {/* Vendors — encoded */}
             {vendors.length > 0 && staff?.show_purchase_price !== false && (
               <div style={{ marginTop: 2, borderTop: "1px dashed #e5e7eb", paddingTop: 4 }}>
                 <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, marginBottom: 3, letterSpacing: 0.5 }}>VENDORS</div>
@@ -128,13 +141,18 @@ export default function ProductCard({ product, staff, cipherKey, onImageClick }:
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={pricePill("#6b7280")}>MRP ₹{product.mrp}</span>
             <span style={pricePill("#2563eb")}>Retail ₹{retailPriceDisplay}</span>
-            {hasMultipleWS ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                {wsPrices.map((p, i) => <span key={i} style={{ ...pricePill("#dc2626"), fontSize: i === 0 ? 12 : 11 }}>{wsLabels[i]}: ₹{p}</span>)}
-              </div>
-            ) : product.wholesale_price ? (
+            {wsPrices.length === 1 && product.wholesale_price && (
               <span style={{ ...pricePill("#dc2626"), fontSize: 13, fontWeight: 800, padding: "4px 10px" }}>W/S ₹{product.wholesale_price}</span>
-            ) : null}
+            )}
+            {wsPrices.length > 1 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {wsPrices.map((p, i) => (
+                  <span key={i} style={{ ...pricePill("#dc2626"), fontSize: i === 0 ? 12 : 11 }}>
+                    {getWsLabel(i)}: ₹{p}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
