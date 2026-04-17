@@ -106,12 +106,10 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
       loadCipherKey(supabase);
     });
 
-    // Only trust browser's navigator.onLine for the banner
     const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
-    // Check actual connectivity
     setIsOffline(!navigator.onLine);
     return () => {
       window.removeEventListener("online", handleOnline);
@@ -132,39 +130,44 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
   async function loadProducts(supabase: any) {
     setLoading(true);
 
-    // Always try Supabase FIRST
     try {
-      const { data, error } = await supabase
-        .from("products")
-        .select("id,name,mrp,price,price_text,wholesale_price,wholesale_labels,purchase_price,category,image_url,video_url,keywords,created_at,short_description,long_description,vendors,barcode,variants_text")
-        .order("created_at", { ascending: false });
+      let allData: any[] = [];
+      let from = 0;
+      const chunk = 1000;
 
-      if (error) {
-        // Show exact Supabase error so we can debug
-        setIsOffline(true);
-        const cached = await getProductsFromDB().catch(() => []);
-        if (cached.length > 0) setProducts(cached);
-        setLoading(false);
-        return;
+      while (true) {
+        const { data, error } = await supabase
+          .from("products")
+          .select("id,name,mrp,price,price_text,wholesale_price,wholesale_labels,purchase_price,category,image_url,video_url,keywords,created_at,short_description,long_description,vendors,barcode,variants_text")
+          .order("created_at", { ascending: false })
+          .range(from, from + chunk - 1);
+
+        if (error) {
+          setIsOffline(true);
+          const cached = await getProductsFromDB().catch(() => []);
+          if (cached.length > 0) setProducts(cached);
+          setLoading(false);
+          return;
+        }
+
+        if (data) allData = [...allData, ...data];
+        if (!data || data.length < chunk) break;
+        from += chunk;
       }
 
-      if (data && data.length >= 0) {
-        setProducts(data);
-        setIsOffline(false);
-        await saveProductsToDB(data);
-        setLoading(false);
-        return;
-      }
+      setProducts(allData);
+      setIsOffline(false);
+      await saveProductsToDB(allData);
+
     } catch {
-      // Network failed — fall through to cache
+      // Network failed — fall to cache
+      try {
+        const cached = await getProductsFromDB();
+        if (cached.length > 0) { setProducts(cached); setIsOffline(true); }
+        else setProducts([]);
+      } catch { setProducts([]); }
     }
 
-    // Fall back to cache
-    try {
-      const cached = await getProductsFromDB();
-      if (cached.length > 0) { setProducts(cached); setIsOffline(true); }
-      else setProducts([]);
-    } catch { setProducts([]); }
     setLoading(false);
   }
 
@@ -207,13 +210,11 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
     const scan = async () => {
       if (!scanning || !videoRef.current || !ctx) return;
       if (videoRef.current.readyState < 2) {
-        // Video not ready yet
         setTimeout(scan, 200);
         return;
       }
 
       frameCount++;
-      // Process every 3rd frame to save CPU
       if (frameCount % 3 !== 0) {
         requestAnimationFrame(scan);
         return;
@@ -225,7 +226,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
 
       try {
         if (hasBarcodeDetector && detector) {
-          // Use native BarcodeDetector on canvas
           const barcodes = await detector.detect(canvas);
           if (barcodes.length > 0) {
             scanning = false;
@@ -238,7 +238,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
       if (scanning) requestAnimationFrame(scan);
     };
 
-    // Start scanning after short delay to let camera warm up
     setTimeout(() => requestAnimationFrame(scan), 500);
     scannerRef.current = { stop: () => { scanning = false; } };
   }
@@ -246,18 +245,15 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
   function handleBarcodeResult(barcode: string) {
     closeScanner();
     const trimmed = barcode.trim();
-    // Search by barcode field - check both single barcode and barcodes array
     const found = products.find(p => {
       if (p.barcode && p.barcode.trim() === trimmed) return true;
       if (Array.isArray((p as any).barcodes) && (p as any).barcodes.some((b: string) => b.trim() === trimmed)) return true;
       return false;
     });
     if (found) {
-      // Direct match — show only this product
       setSearch(found.name);
       setActiveCategory("All");
     } else {
-      // Not found — show barcode in search so user sees "no results" with barcode
       setSearch(barcode);
       setActiveCategory("All");
     }
@@ -337,7 +333,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
     const matchCat = activeCategory === "All" || cats.includes(activeCategory);
     const q = search.toLowerCase().trim();
     if (!q) return matchCat;
-    // Middle word search - split query into words and check all match
     const words = q.split(/\s+/).filter(Boolean);
     const searchText = [
       p.name || "",
@@ -349,8 +344,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
     return matchCat && matchSearch;
   });
 
-  const wsLabels = ["Single", "Bundle", "Pack", "Bulk", "Special"];
-
   return (
     <div style={{ minHeight: "100dvh", background: "#fff9f9", fontFamily: "system-ui,sans-serif" }}>
       {isOffline && (
@@ -358,7 +351,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
           📴 Offline — showing cached data
         </div>
       )}
-
 
       {/* Header */}
       <div style={{ position: "sticky", top: 0, zIndex: 100, background: "linear-gradient(135deg,#ef4444,#b91c1c)", padding: "12px 16px 10px", boxShadow: "0 2px 12px rgba(185,28,28,0.25)" }}>
@@ -385,7 +377,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
               style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px 9px 32px", borderRadius: 12, border: "none", fontSize: 13, outline: "none", background: "rgba(255,255,255,0.95)" }}
             />
           </div>
-          {/* Barcode button */}
           <button
             onClick={openScanner}
             style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.4)", color: "#fff", borderRadius: 12, padding: "9px 14px", fontSize: 18, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
@@ -425,7 +416,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
             <div>Loading products...</div>
           </div>
         ) : isOffline && products.length === 0 ? (
-          /* No internet AND no cached data */
           <div style={{
             display: "flex", flexDirection: "column", alignItems: "center",
             padding: "48px 24px", textAlign: "center",
@@ -480,23 +470,19 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
         </div>
       )}
 
-      {/* ── BARCODE SCANNER MODAL ── */}
+      {/* BARCODE SCANNER MODAL */}
       {scannerOpen && (
         <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 9999, display: "flex", flexDirection: "column" }}>
-          {/* Scanner header */}
           <div style={{ background: "linear-gradient(135deg,#ef4444,#b91c1c)", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ color: "#fff", fontWeight: 700, fontSize: 15 }}>📷 Scan Barcode</div>
             <button onClick={closeScanner} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", borderRadius: 8, width: 32, height: 32, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
           </div>
 
-          {/* Camera view */}
           <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <video ref={videoRef} style={{ width: "100%", height: "100%", objectFit: "cover" }} playsInline muted />
 
-            {/* Scan overlay */}
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
               <div style={{ width: 260, height: 160, position: "relative" }}>
-                {/* Corner markers */}
                 {[["0,0","0,0"],["auto,0","0,0"],["0,auto","0,0"],["auto,auto","0,0"]].map((_, i) => (
                   <div key={i} style={{
                     position: "absolute",
@@ -509,7 +495,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
                     borderRight: i % 2 === 1 ? "3px solid #ef4444" : "none",
                   }} />
                 ))}
-                {/* Scan line animation */}
                 <div style={{
                   position: "absolute", left: 0, right: 0, height: 2,
                   background: "rgba(239,68,68,0.8)",
@@ -534,12 +519,8 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
           </div>
 
           <div style={{ background: "#111", padding: "12px 16px", textAlign: "center" }}>
-            <div style={{ color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
-              📷 Point camera at barcode
-            </div>
-            <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>
-              Hold steady — scanning automatically
-            </div>
+            <div style={{ color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>📷 Point camera at barcode</div>
+            <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>Hold steady — scanning automatically</div>
           </div>
 
           <style>{`
@@ -552,7 +533,7 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
         </div>
       )}
 
-      {/* ── FULLSCREEN VIEWER ── */}
+      {/* FULLSCREEN VIEWER */}
       {fsProduct && (
         <div className={fsClosing ? "fs-bg-out" : "fs-bg"}
           style={{ position: "fixed", inset: 0, background: "linear-gradient(160deg,#1a0000,#2d0000,#1a0000)", zIndex: 9998, display: "flex", flexDirection: "column", overflowY: "auto" }}
@@ -565,7 +546,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
             .fs-bg-out { animation: fsBgOut 0.25s ease both; }
           `}</style>
 
-          {/* Top bar */}
           <div onClick={e => e.stopPropagation()} style={{ position: "sticky", top: 0, zIndex: 10, background: "linear-gradient(135deg,#ef4444,#b91c1c)", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
               <button onClick={closeFullscreen} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", borderRadius: 8, width: 32, height: 32, fontSize: 18, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>←</button>
@@ -580,7 +560,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
             </div>
           </div>
 
-          {/* Media */}
           <div onClick={e => e.stopPropagation()} style={{ width: "100%", background: "#000" }}>
             {isVideo(fsSrc) ? (
               <video src={fsSrc} controls autoPlay style={{ width: "100%", maxHeight: "55vh", objectFit: "contain", display: "block" }} />
@@ -589,7 +568,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
             )}
           </div>
 
-          {/* Nav */}
           {fsMedia.length > 1 && (
             <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, padding: "10px 0" }}>
               <button onClick={e => { e.stopPropagation(); setFsIndex(i => (i - 1 + fsMedia.length) % fsMedia.length); }} style={{ background: "rgba(239,68,68,0.85)", border: "none", color: "#fff", borderRadius: "50%", width: 38, height: 38, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
@@ -602,7 +580,6 @@ export default function ProductGrid({ staff, showLogin, onShowLogin, onHideLogin
             </div>
           )}
 
-          {/* Description */}
           {(fsProduct.short_description || fsProduct.long_description) && (
             <div onClick={e => e.stopPropagation()} style={{ margin: "0 12px 12px", background: "rgba(255,255,255,0.08)", borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", padding: "12px 14px" }}>
               <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 10, fontWeight: 700, letterSpacing: 0.8, marginBottom: 8 }}>📋 DESCRIPTION</div>
