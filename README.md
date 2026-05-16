@@ -169,13 +169,6 @@ PWABuilder TWA
 
 ---
 
-## Mobile Interface
-
-<img src="images/mobile.png"/>
-
----
-
-*(Create `/images` folder and upload screenshots)*
 
 ---
 
